@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "workspaces": ["package", "harness"],
+  "scripts": {
+    "dev": "npm run dev --workspace=harness",
+    "build:pkg": "npm run build --workspace=package"
+  }
+}

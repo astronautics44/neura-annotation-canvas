@@ -1,0 +1,30 @@
+{
+  "annotations": {
+    "schedule_codes": [
+      {
+        "text": "Thermostat",
+        "matched_code": "Thermostat",
+        "bbox": [
+          [7433.17, 2979.23],
+          [7549.84, 2979.23],
+          [7549.84, 3095.89],
+          [7433.17, 3095.89]
+        ],
+        "confidence": 1,
+        "source": "Human"
+      },
+      {
+        "text": "Thermostat",
+        "matched_code": "Thermostat",
+        "bbox": [
+          [7426.92, 3277.14],
+          [7526.92, 3277.14],
+          [7526.92, 3389.64],
+          [7426.92, 3389.64]
+        ],
+        "confidence": 0.91,
+        "source": "Engine"
+      }
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "images": [{ "id": 1, "width": 2400, "height": 1800 }],
+  "annotations": [
+    { "id": 1, "category_id": 3, "bbox": [120, 200, 80, 120], "score": 0.94 },
+    { "id": 2, "category_id": 1, "bbox": [400, 300, 200, 150], "score": 0.87 },
+    {
+      "id": 3,
+      "category_id": 2,
+      "segmentation": [[600, 400, 700, 400, 720, 500, 580, 510]],
+      "score": 0.76
+    }
+  ],
+  "categories": [
+    { "id": 1, "name": "ROOM_AREA" },
+    { "id": 2, "name": "WALL_SEGMENT" },
+    { "id": 3, "name": "DR_OPENING" }
+  ]
+}

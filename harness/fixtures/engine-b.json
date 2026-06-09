@@ -1,0 +1,22 @@
+{
+  "image_width": 2400,
+  "image_height": 1800,
+  "detections": [
+    {
+      "class": "door_opening",
+      "cx": 0.067,
+      "cy": 0.172,
+      "w": 0.033,
+      "h": 0.067,
+      "confidence": 0.91
+    },
+    {
+      "class": "room",
+      "cx": 0.25,
+      "cy": 0.25,
+      "w": 0.083,
+      "h": 0.083,
+      "confidence": 0.88
+    }
+  ]
+}

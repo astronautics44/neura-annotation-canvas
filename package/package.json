@@ -1,0 +1,16 @@
+{
+  "name": "@neura/annotation-engine",
+  "version": "0.1.0",
+  "private": false,
+  "main": "src/index.ts",
+  "dependencies": {
+    "konva": "^9.3.6",
+    "react-konva": "^18.2.10",
+    "nanoid": "^5.0.7",
+    "lucide-react": "^0.469.0"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  }
+}
