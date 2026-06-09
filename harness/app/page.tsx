@@ -18,8 +18,7 @@ const AnnotationCanvas = dynamic(
   { ssr: false },
 );
 
-const FLOOR_PLAN_URL =
-  "https://upload.wikimedia.org/wikipedia/commons/thumb/1/17/Sample_Floorplan.jpg/1280px-Sample_Floorplan.jpg";
+const FLOOR_PLAN_URL = "/floorplan.svg";
 
 type Engine = "A" | "B" | "C" | "D";
 
@@ -38,6 +37,7 @@ function getAnnotations(engine: Engine): CanonicalAnnotation[] {
 
 export default function Page() {
   const [engine, setEngine] = useState<Engine>("A");
+  const [labels, setLabels] = useState(labelRegistry);
   const annotations = getAnnotations(engine);
 
   return (
@@ -90,13 +90,17 @@ export default function Page() {
         <AnnotationCanvas
           key={engine}
           image={FLOOR_PLAN_URL}
-          labels={labelRegistry}
+          labels={labels}
           annotations={annotations}
           onSave={(saved) => {
             console.log("[annotation-engine] onSave", saved);
           }}
           onChange={(all) => {
             console.log("[annotation-engine] onChange count:", all.length);
+          }}
+          onLabelsChange={(updated) => {
+            setLabels(updated);
+            console.log("[annotation-engine] onLabelsChange", updated);
           }}
         />
       </div>

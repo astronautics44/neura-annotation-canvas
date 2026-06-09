@@ -11,9 +11,10 @@ interface Props {
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onRelabel: (id: string, label: string) => void;
+  onCreateLabel?: (displayName: string) => string;
 }
 
-export function LabelPanel({ annotations, labels, selectedId, onSelect, onDelete, onRelabel }: Props) {
+export function LabelPanel({ annotations, labels, selectedId, onSelect, onDelete, onRelabel, onCreateLabel }: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
   const [relabelTarget, setRelabelTarget] = useState<{ id: string; pos: { x: number; y: number } } | null>(null);
@@ -155,6 +156,7 @@ export function LabelPanel({ annotations, labels, selectedId, onSelect, onDelete
             setRelabelTarget(null);
           }}
           onCancel={() => setRelabelTarget(null)}
+          onCreateLabel={onCreateLabel}
         />
       )}
     </div>
