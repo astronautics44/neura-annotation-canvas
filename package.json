@@ -3,6 +3,7 @@
   "workspaces": ["package", "harness"],
   "scripts": {
     "dev": "npm run dev --workspace=harness",
-    "build:pkg": "npm run build --workspace=package"
+    "build:pkg": "npm run build --workspace=package",
+    "publish:pkg": "npm publish --workspace=package"
   }
 }

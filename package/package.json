@@ -1,11 +1,29 @@
 {
-  "name": "@neura/annotation-engine",
+  "name": "@ahmadtanveer44/neura-annotation-canvas",
   "version": "0.1.0",
   "private": false,
-  "main": "src/index.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./geo": "./src/utils/geometry.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./geo": {
+      "types": "./dist/utils/geometry.d.ts",
+      "import": "./dist/utils/geometry.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
   },
   "dependencies": {
     "konva": "^9.3.6",

@@ -1,4 +1,4 @@
-import type { LabelMap } from "@neura/annotation-engine";
+import type { LabelMap } from "@ahmadtanveer44/neura-annotation-canvas";
 
 export const labelRegistry: LabelMap[] = [
   { canonicalClassId: "door", displayName: "Door", color: "#FF6B6B", defaultTool: "bbox" },

@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  transpilePackages: ["@neura/annotation-engine"],
+  transpilePackages: ["@ahmadtanveer44/neura-annotation-canvas"],
 
   // Turbopack (Next.js 16 default): force konva's browser CJS build so the
   // server side never tries to require('canvas').

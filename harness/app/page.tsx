@@ -2,7 +2,10 @@
 
 import dynamic from "next/dynamic";
 import { useState } from "react";
-import type { CanonicalAnnotation, ThemeVars } from "@neura/annotation-engine";
+import type {
+  CanonicalAnnotation,
+  ThemeVars,
+} from "@ahmadtanveer44/neura-annotation-canvas";
 import { labelRegistry } from "../fixtures/label-registry";
 import { adaptEngineA } from "../lib/adapters";
 import { adaptEngineB } from "../lib/adapters";
@@ -14,7 +17,10 @@ import engineC from "../fixtures/engine-c.json";
 import engineD from "../fixtures/engine-d.json";
 
 const AnnotationCanvas = dynamic(
-  () => import("@neura/annotation-engine").then((m) => m.AnnotationCanvas),
+  () =>
+    import("@ahmadtanveer44/neura-annotation-canvas").then(
+      (m) => m.AnnotationCanvas,
+    ),
   { ssr: false },
 );
 
@@ -22,21 +28,21 @@ const FLOOR_PLAN_URL = "/floorplan.svg";
 
 // Ccript Agency design system — deep charcoal + warm orange
 const ccriptTheme: Partial<ThemeVars> = {
-  bgBase:        "#0C0C0C",
-  bgSurface:     "#161616",
-  bgElevated:    "#1F1F1F",
-  bgCanvas:      "#080808",
-  border:        "#2A2A2A",
-  borderSubtle:  "#1A1A1A",
-  textPrimary:   "#F5F5F5",
+  bgBase: "#0C0C0C",
+  bgSurface: "#161616",
+  bgElevated: "#1F1F1F",
+  bgCanvas: "#080808",
+  border: "#2A2A2A",
+  borderSubtle: "#1A1A1A",
+  textPrimary: "#F5F5F5",
   textSecondary: "#8A8A8A",
-  textMuted:     "#4A4A4A",
-  accent:        "#F97316",
-  accentHover:   "#EA6C0A",
-  danger:        "#EF4444",
-  success:       "#22C55E",
-  handleFill:    "#FFFFFF",
-  selection:     "rgba(249,115,22,0.15)",
+  textMuted: "#4A4A4A",
+  accent: "#F97316",
+  accentHover: "#EA6C0A",
+  danger: "#EF4444",
+  success: "#22C55E",
+  handleFill: "#FFFFFF",
+  selection: "rgba(249,115,22,0.15)",
 };
 
 type Engine = "A" | "B" | "C" | "D";
@@ -83,33 +89,50 @@ export default function Page() {
         }}
       >
         {/* Logo mark */}
-        <span style={{
-          fontSize: 13,
-          fontWeight: 600,
-          color: ccriptTheme.textPrimary,
-          letterSpacing: "0.02em",
-          marginRight: 12,
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-        }}>
-          <span style={{
-            width: 6,
-            height: 6,
-            borderRadius: "50%",
-            background: ccriptTheme.accent,
-            display: "inline-block",
-            flexShrink: 0,
-          }} />
+        <span
+          style={{
+            fontSize: 13,
+            fontWeight: 600,
+            color: ccriptTheme.textPrimary,
+            letterSpacing: "0.02em",
+            marginRight: 12,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          <span
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background: ccriptTheme.accent,
+              display: "inline-block",
+              flexShrink: 0,
+            }}
+          />
           neura
           <span style={{ color: ccriptTheme.accent }}>·</span>
           annotation
         </span>
 
         {/* Divider */}
-        <div style={{ width: 1, height: 18, background: ccriptTheme.border, marginRight: 8 }} />
+        <div
+          style={{
+            width: 1,
+            height: 18,
+            background: ccriptTheme.border,
+            marginRight: 8,
+          }}
+        />
 
-        <span style={{ fontSize: 11, color: ccriptTheme.textSecondary, marginRight: 4 }}>
+        <span
+          style={{
+            fontSize: 11,
+            color: ccriptTheme.textSecondary,
+            marginRight: 4,
+          }}
+        >
           Engine fixture:
         </span>
 
@@ -119,7 +142,8 @@ export default function Page() {
             onClick={() => setEngine(e)}
             style={{
               padding: "3px 12px",
-              background: engine === e ? ccriptTheme.accent : ccriptTheme.bgElevated,
+              background:
+                engine === e ? ccriptTheme.accent : ccriptTheme.bgElevated,
               color: engine === e ? "#ffffff" : ccriptTheme.textSecondary,
               border: `1px solid ${engine === e ? ccriptTheme.accent! : ccriptTheme.border!}`,
               borderRadius: 4,

@@ -3,12 +3,12 @@
  *
  * This file shows how a CLIENT WEBAPP should write its own adapter.
  * Copy the pattern, adapt the field names to your engine's schema.
- * The package (`@neura/annotation-engine`) has no adapters.
+ * The package (`@ahmadtanveer44/neura-annotation-canvas`) has no adapters.
  * Adapters live exclusively in the consuming webapp.
  */
 
-import { geo } from "@neura/annotation-engine/geo";
-import type { CanonicalAnnotation } from "@neura/annotation-engine";
+import { geo } from "@ahmadtanveer44/neura-annotation-canvas/geo";
+import type { CanonicalAnnotation } from "@ahmadtanveer44/neura-annotation-canvas";
 
 // ---------------------------------------------------------------------------
 // Engine A — COCO format
