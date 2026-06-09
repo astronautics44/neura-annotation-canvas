@@ -6,8 +6,8 @@
   "dependencies": {
     "konva": "^9.3.6",
     "react-konva": "^18.2.10",
-    "nanoid": "^5.0.7",
-    "lucide-react": "^0.469.0"
+    "use-image": "^1.1.1",
+    "nanoid": "^5.0.7"
   },
   "peerDependencies": {
     "react": ">=18",
