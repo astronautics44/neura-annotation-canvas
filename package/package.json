@@ -3,9 +3,13 @@
   "version": "0.1.0",
   "private": false,
   "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./geo": "./src/utils/geometry.ts"
+  },
   "dependencies": {
     "konva": "^9.3.6",
-    "react-konva": "^18.2.10",
+    "react-konva": "19.0.10",
     "use-image": "^1.1.1",
     "nanoid": "^5.0.7"
   },

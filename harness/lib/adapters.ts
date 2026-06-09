@@ -7,7 +7,7 @@
  * Adapters live exclusively in the consuming webapp.
  */
 
-import { geo } from "@neura/annotation-engine";
+import { geo } from "@neura/annotation-engine/geo";
 import type { CanonicalAnnotation } from "@neura/annotation-engine";
 
 // ---------------------------------------------------------------------------
