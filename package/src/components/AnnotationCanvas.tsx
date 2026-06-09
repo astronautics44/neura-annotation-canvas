@@ -12,6 +12,8 @@ import type { Stage as StageType } from "konva/lib/Stage";
 import { Stage, Layer, Image as KonvaImage, Rect, Line, Circle, Group, Text } from "react-konva";
 import useImage from "use-image";
 import type { CanonicalAnnotation, LabelMap, ToolType } from "../types/canonical";
+import type { ThemeVars } from "../theme";
+import { resolveTheme, themeToCssVars } from "../theme";
 import { newId } from "../utils/ids";
 import { Toolbar } from "./Toolbar";
 import { LabelPanel } from "./LabelPanel";
@@ -56,6 +58,7 @@ interface Props {
   tools?: ToolType[];
   readonly?: boolean;
   className?: string;
+  theme?: Partial<ThemeVars>;
 }
 
 // Rotating palette for auto-assigned label colors
@@ -137,7 +140,9 @@ export function AnnotationCanvas({
   tools,
   readonly = false,
   className,
+  theme: themeProp,
 }: Props) {
+  const resolved = resolveTheme(themeProp);
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<StageType>(null);
   const [containerSize, setContainerSize] = useState({ w: 800, h: 600 });
@@ -522,7 +527,7 @@ export function AnnotationCanvas({
       <Group x={chipX} y={chipY}>
         <Rect width={chipWidth} height={14 / scale} fill="rgba(0,0,0,0.65)" cornerRadius={3 / scale} />
         <Circle x={6 / scale} y={7 / scale} radius={3 / scale} fill={color} />
-        <Text x={12 / scale} y={2 / scale} text={chipLabel + chipConf} fontSize={11 / scale} fill="#e8e8e8" fontFamily="system-ui" />
+        <Text x={12 / scale} y={2 / scale} text={chipLabel + chipConf} fontSize={11 / scale} fill={resolved.textPrimary} fontFamily="system-ui" />
       </Group>
     ) : null;
 
@@ -533,7 +538,7 @@ export function AnnotationCanvas({
           <Rect x={x} y={y} width={w} height={h} fill={hexToRgba(color, fillAlpha)} {...commonProps} />
           {isSelected && bboxHandles(x, y, w, h).map((handle, i) => (
             <Circle key={i} x={handle.pos[0]} y={handle.pos[1]}
-              radius={HANDLE_RADIUS / scale} fill="#ffffff" stroke={color} strokeWidth={2 / scale}
+              radius={HANDLE_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={2 / scale}
               onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
                 e.cancelBubble = true;
                 setDraggingHandle({ annId: ann.id, handleIdx: i, startImg: getImagePos(e) });
@@ -550,7 +555,7 @@ export function AnnotationCanvas({
         <Group key={ann.id}>
           <Line points={ann.points.flatMap(([x, y]) => [x, y])} closed fill={hexToRgba(color, fillAlpha)} {...commonProps} />
           {isSelected && ann.points.map(([x, y], i) => (
-            <Circle key={i} x={x} y={y} radius={VERTEX_RADIUS / scale} fill="#ffffff" stroke={color} strokeWidth={1.5 / scale}
+            <Circle key={i} x={x} y={y} radius={VERTEX_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={1.5 / scale}
               onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
                 e.cancelBubble = true;
                 setDraggingVertex({ annId: ann.id, vertIdx: i, startImg: getImagePos(e) });
@@ -567,7 +572,7 @@ export function AnnotationCanvas({
         <Group key={ann.id}>
           <Line points={ann.points.flatMap(([x, y]) => [x, y])} hitStrokeWidth={10 / scale} {...commonProps} />
           {isSelected && ann.points.map(([x, y], i) => (
-            <Circle key={i} x={x} y={y} radius={HANDLE_RADIUS / scale} fill="#ffffff" stroke={color} strokeWidth={2 / scale}
+            <Circle key={i} x={x} y={y} radius={HANDLE_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={2 / scale}
               onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
                 e.cancelBubble = true;
                 setDraggingVertex({ annId: ann.id, vertIdx: i, startImg: getImagePos(e) });
@@ -582,7 +587,7 @@ export function AnnotationCanvas({
       const [x, y] = ann.points[0]!;
       return (
         <Group key={ann.id}>
-          <Circle x={x} y={y} radius={8 / scale} fill={color} stroke="#ffffff" strokeWidth={2 / scale} opacity={opacity}
+          <Circle x={x} y={y} radius={8 / scale} fill={color} stroke={resolved.handleFill} strokeWidth={2 / scale} opacity={opacity}
             onClick={(e: KonvaEventObject<MouseEvent>) => handleAnnotationClick(ann.id, e)}
             onMouseDown={(e: KonvaEventObject<MouseEvent>) => handleAnnotationMouseDown(ann.id, e)}
             onMouseEnter={() => setHoveredId(ann.id)}
@@ -602,7 +607,7 @@ export function AnnotationCanvas({
   const renderDraw = () => {
     if (draw.phase === "bbox-drawing") {
       const { x, y, w, h } = bboxToKonva([draw.start, draw.cur]);
-      return <Rect x={x} y={y} width={w} height={h} stroke="#2563eb" strokeWidth={1.5 / scale} fill="rgba(37,99,235,0.1)" dash={[4 / scale, 4 / scale]} />;
+      return <Rect x={x} y={y} width={w} height={h} stroke={resolved.accent} strokeWidth={1.5 / scale} fill={hexToRgba(resolved.accent, 0.1)} dash={[4 / scale, 4 / scale]} />;
     }
 
     if (draw.phase === "polygon-drawing" && draw.pts.length > 0) {
@@ -613,16 +618,16 @@ export function AnnotationCanvas({
       const nearFirst = draw.pts.length >= 3 && (dx * dx + dy * dy) * scale * scale < CLOSE_DIST * CLOSE_DIST;
       return (
         <Group>
-          {draw.pts.length > 1 && <Line points={flat} stroke="#2563eb" strokeWidth={1.5 / scale} />}
-          <Line points={[lastPt[0], lastPt[1], draw.cur[0], draw.cur[1]]} stroke="#2563eb" strokeWidth={1.5 / scale} dash={[4 / scale, 4 / scale]} />
-          {draw.pts.map(([x, y], i) => <Circle key={i} x={x} y={y} radius={4 / scale} fill="#ffffff" stroke="#2563eb" strokeWidth={1 / scale} />)}
-          {nearFirst && <Circle x={firstPt[0]} y={firstPt[1]} radius={6 / scale} fill="#22c55e" opacity={0.7} />}
+          {draw.pts.length > 1 && <Line points={flat} stroke={resolved.accent} strokeWidth={1.5 / scale} />}
+          <Line points={[lastPt[0], lastPt[1], draw.cur[0], draw.cur[1]]} stroke={resolved.accent} strokeWidth={1.5 / scale} dash={[4 / scale, 4 / scale]} />
+          {draw.pts.map(([x, y], i) => <Circle key={i} x={x} y={y} radius={4 / scale} fill={resolved.handleFill} stroke={resolved.accent} strokeWidth={1 / scale} />)}
+          {nearFirst && <Circle x={firstPt[0]} y={firstPt[1]} radius={6 / scale} fill={resolved.success} opacity={0.7} />}
         </Group>
       );
     }
 
     if (draw.phase === "line-drawing") {
-      return <Line points={[draw.start[0], draw.start[1], draw.cur[0], draw.cur[1]]} stroke="#2563eb" strokeWidth={1.5 / scale} dash={[4 / scale, 4 / scale]} />;
+      return <Line points={[draw.start[0], draw.start[1], draw.cur[0], draw.cur[1]]} stroke={resolved.accent} strokeWidth={1.5 / scale} dash={[4 / scale, 4 / scale]} />;
     }
 
     return null;
@@ -634,8 +639,10 @@ export function AnnotationCanvas({
 
   const availableTools = tools ?? (["select", "bbox", "polygon", "line", "point"] as ToolType[]);
 
+  const cssVars = themeToCssVars(resolved) as React.CSSProperties;
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", background: "#141414", fontFamily: "system-ui,-apple-system,'Segoe UI',sans-serif", fontSize: 13, color: "#e8e8e8", overflow: "hidden" }} className={className ?? ""}>
+    <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", background: "var(--ae-bg-base)", fontFamily: "system-ui,-apple-system,'Segoe UI',sans-serif", fontSize: 13, color: "var(--ae-text-primary)", overflow: "hidden", ...cssVars }} className={className ?? ""}>
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         <Toolbar
           tools={availableTools}
@@ -644,8 +651,9 @@ export function AnnotationCanvas({
           onToolChange={(t) => { setPanMode(false); setTool(t); setDraw({ phase: "idle" }); }}
           onPanModeChange={setPanMode}
           readonly={readonly}
+          width={resolved.toolbarWidth}
         />
-        <div ref={containerRef} style={{ flex: 1, background: "#0f0f0f", position: "relative", overflow: "hidden", cursor: stageCursor }}>
+        <div ref={containerRef} style={{ flex: 1, background: "var(--ae-bg-canvas)", position: "relative", overflow: "hidden", cursor: stageCursor }}>
           <Stage
             ref={stageRef}
             width={containerSize.w}
@@ -681,6 +689,7 @@ export function AnnotationCanvas({
           labels={labels}
           selectedId={selectedId}
           onCreateLabel={readonly ? undefined : handleCreateLabel}
+          width={resolved.panelWidth}
           onSelect={(id) => {
             setSelectedId(id);
             const ann = annotations.find((a) => a.id === id);
@@ -699,7 +708,7 @@ export function AnnotationCanvas({
           }}
         />
       </div>
-      <div style={{ height: 28, background: "#1e1e1e", borderTop: "1px solid #333333", display: "flex", alignItems: "center", padding: "0 12px", justifyContent: "space-between", fontSize: 11, color: "#8a8a8a" }}>
+      <div style={{ height: resolved.statusBarHeight, background: "var(--ae-bg-surface)", borderTop: "1px solid var(--ae-border)", display: "flex", alignItems: "center", padding: "0 12px", justifyContent: "space-between", fontSize: 11, color: "var(--ae-text-secondary)" }}>
         <span>Zoom: <span style={{ fontFamily: "'JetBrains Mono','Fira Code',monospace" }}>{Math.round(scale * 100)}%</span></span>
         <span style={{ fontFamily: "'JetBrains Mono','Fira Code',monospace" }}>x: {Math.round(cursorImg[0])} y: {Math.round(cursorImg[1])}</span>
       </div>

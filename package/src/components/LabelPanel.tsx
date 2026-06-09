@@ -12,9 +12,10 @@ interface Props {
   onDelete: (id: string) => void;
   onRelabel: (id: string, label: string) => void;
   onCreateLabel?: (displayName: string) => string;
+  width?: number;
 }
 
-export function LabelPanel({ annotations, labels, selectedId, onSelect, onDelete, onRelabel, onCreateLabel }: Props) {
+export function LabelPanel({ annotations, labels, selectedId, onSelect, onDelete, onRelabel, onCreateLabel, width = 220 }: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
   const [relabelTarget, setRelabelTarget] = useState<{ id: string; pos: { x: number; y: number } } | null>(null);
@@ -34,9 +35,9 @@ export function LabelPanel({ annotations, labels, selectedId, onSelect, onDelete
 
   return (
     <div style={{
-      width: 220,
-      background: "#1e1e1e",
-      borderLeft: "1px solid #333333",
+      width,
+      background: "var(--ae-bg-surface)",
+      borderLeft: "1px solid var(--ae-border)",
       display: "flex",
       flexDirection: "column",
       flexShrink: 0,
@@ -46,17 +47,17 @@ export function LabelPanel({ annotations, labels, selectedId, onSelect, onDelete
       {/* Header */}
       <div style={{
         padding: "8px 12px",
-        borderBottom: "1px solid #333333",
+        borderBottom: "1px solid var(--ae-border)",
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
       }}>
-        <span style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#8a8a8a" }}>
+        <span style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--ae-text-secondary)" }}>
           Annotations
         </span>
         <span style={{
-          fontSize: 11, background: "#2a2a2a", borderRadius: 10,
-          padding: "1px 6px", color: "#e8e8e8",
+          fontSize: 11, background: "var(--ae-bg-elevated)", borderRadius: 10,
+          padding: "1px 6px", color: "var(--ae-text-primary)",
         }}>
           {annotations.length}
         </span>
@@ -80,14 +81,14 @@ export function LabelPanel({ annotations, labels, selectedId, onSelect, onDelete
                   display: "flex", alignItems: "center", gap: 8,
                   padding: "6px 12px",
                   cursor: "pointer",
-                  borderBottom: "1px solid #2a2a2a",
+                  borderBottom: "1px solid var(--ae-border-subtle)",
                   userSelect: "none",
                 }}
               >
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: lm.color, flexShrink: 0 }} />
-                <span style={{ flex: 1, fontSize: 13, color: "#e8e8e8" }}>{lm.displayName}</span>
-                <span style={{ fontSize: 11, color: "#8a8a8a" }}>({items.length})</span>
-                <span style={{ fontSize: 10, color: "#555555" }}>{isCollapsed ? "▶" : "▼"}</span>
+                <span style={{ flex: 1, fontSize: 13, color: "var(--ae-text-primary)" }}>{lm.displayName}</span>
+                <span style={{ fontSize: 11, color: "var(--ae-text-secondary)" }}>({items.length})</span>
+                <span style={{ fontSize: 10, color: "var(--ae-text-muted)" }}>{isCollapsed ? "▶" : "▼"}</span>
               </div>
 
               {/* Annotation rows */}
@@ -101,18 +102,18 @@ export function LabelPanel({ annotations, labels, selectedId, onSelect, onDelete
                     display: "flex", alignItems: "center", gap: 6,
                     padding: "4px 12px 4px 28px",
                     cursor: "pointer",
-                    background: selectedId === ann.id ? "rgba(37,99,235,0.15)" : hoveredRow === ann.id ? "#2a2a2a" : "transparent",
-                    borderBottom: "1px solid #1e1e1e",
+                    background: selectedId === ann.id ? "var(--ae-selection)" : hoveredRow === ann.id ? "var(--ae-bg-elevated)" : "transparent",
+                    borderBottom: "1px solid var(--ae-bg-surface)",
                   }}
                 >
-                  <span style={{ flex: 1, fontSize: 12, color: "#8a8a8a", fontFamily: "monospace" }}>
+                  <span style={{ flex: 1, fontSize: 12, color: "var(--ae-text-secondary)", fontFamily: "monospace" }}>
                     #{shortId(ann.id)}
                   </span>
-                  <span style={{ fontSize: 11, color: "#555555" }}>{ann.type}</span>
+                  <span style={{ fontSize: 11, color: "var(--ae-text-muted)" }}>{ann.type}</span>
                   <span style={{
                     fontSize: 10, borderRadius: 3, padding: "1px 4px",
-                    background: ann.source === "human" ? "#1d4ed8" : "#333333",
-                    color: ann.source === "human" ? "#93c5fd" : "#8a8a8a",
+                    background: ann.source === "human" ? "var(--ae-accent-hover)" : "var(--ae-border)",
+                    color: ann.source === "human" ? "#93c5fd" : "var(--ae-text-secondary)",
                     flexShrink: 0,
                   }}>
                     {ann.source === "human" ? "H" : "AI"}
@@ -131,7 +132,7 @@ export function LabelPanel({ annotations, labels, selectedId, onSelect, onDelete
                       <button
                         title="Delete"
                         onClick={(e) => { e.stopPropagation(); onDelete(ann.id); }}
-                        style={{ ...iconBtn, color: "#ef4444" }}
+                        style={{ ...iconBtn, color: "var(--ae-danger)" }}
                       >✕</button>
                     </>
                   )}
@@ -141,7 +142,7 @@ export function LabelPanel({ annotations, labels, selectedId, onSelect, onDelete
           );
         })}
         {ungrouped.map((ann) => (
-          <div key={ann.id} style={{ padding: "4px 12px", fontSize: 12, color: "#555555" }}>
+          <div key={ann.id} style={{ padding: "4px 12px", fontSize: 12, color: "var(--ae-text-muted)" }}>
             #{shortId(ann.id)} (unknown label)
           </div>
         ))}
@@ -167,7 +168,7 @@ const iconBtn: React.CSSProperties = {
   background: "none",
   border: "none",
   cursor: "pointer",
-  color: "#8a8a8a",
+  color: "var(--ae-text-secondary)",
   fontSize: 12,
   padding: "0 2px",
   lineHeight: 1,

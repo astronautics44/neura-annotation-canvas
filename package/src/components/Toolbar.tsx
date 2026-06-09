@@ -10,6 +10,7 @@ interface Props {
   onToolChange: (tool: ToolType) => void;
   onPanModeChange: (on: boolean) => void;
   readonly: boolean;
+  width?: number;
 }
 
 type ButtonDef = { id: string; label: string; shortcut: string; icon: React.ReactNode };
@@ -61,31 +62,31 @@ function ToolButton({ def, isActive, disabled, tooltip, onMouseEnter, onMouseLea
         style={{
           width: 36, height: 36,
           display: "flex", alignItems: "center", justifyContent: "center",
-          background: isActive ? "#2563eb" : "transparent",
+          background: isActive ? "var(--ae-accent)" : "transparent",
           border: "none", borderRadius: 6,
           cursor: disabled ? "not-allowed" : "pointer",
-          color: disabled ? "#555555" : isActive ? "#ffffff" : "#8a8a8a",
+          color: disabled ? "var(--ae-text-muted)" : isActive ? "#ffffff" : "var(--ae-text-secondary)",
           transition: "background 0.1s, color 0.1s",
         }}
-        onMouseOver={(e) => { if (!isActive && !disabled) { (e.currentTarget as HTMLButtonElement).style.background = "#2a2a2a"; (e.currentTarget as HTMLButtonElement).style.color = "#e8e8e8"; } }}
-        onMouseOut={(e) => { if (!isActive) { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = disabled ? "#555555" : "#8a8a8a"; } }}
+        onMouseOver={(e) => { if (!isActive && !disabled) { (e.currentTarget as HTMLButtonElement).style.background = "var(--ae-bg-elevated)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-primary)"; } }}
+        onMouseOut={(e) => { if (!isActive) { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = disabled ? "var(--ae-text-muted)" : "var(--ae-text-secondary)"; } }}
       >
         {def.icon}
       </button>
       {tooltip === def.id && (
-        <div style={{ position: "absolute", left: 44, top: "50%", transform: "translateY(-50%)", background: "#2a2a2a", border: "1px solid #333333", borderRadius: 4, padding: "4px 8px", whiteSpace: "nowrap", fontSize: 12, color: "#e8e8e8", pointerEvents: "none", zIndex: 1000 }}>
-          {def.label} <span style={{ color: "#8a8a8a", fontFamily: "monospace" }}>[{def.shortcut}]</span>
+        <div style={{ position: "absolute", left: 44, top: "50%", transform: "translateY(-50%)", background: "var(--ae-bg-elevated)", border: "1px solid var(--ae-border)", borderRadius: 4, padding: "4px 8px", whiteSpace: "nowrap", fontSize: 12, color: "var(--ae-text-primary)", pointerEvents: "none", zIndex: 1000 }}>
+          {def.label} <span style={{ color: "var(--ae-text-secondary)", fontFamily: "monospace" }}>[{def.shortcut}]</span>
         </div>
       )}
     </div>
   );
 }
 
-export function Toolbar({ tools, activeTool, panMode, onToolChange, onPanModeChange, readonly }: Props) {
+export function Toolbar({ tools, activeTool, panMode, onToolChange, onPanModeChange, readonly, width = 48 }: Props) {
   const [tooltip, setTooltip] = useState<string | null>(null);
 
   return (
-    <div style={{ width: 48, background: "#1e1e1e", borderRight: "1px solid #333333", display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 8, gap: 4, flexShrink: 0 }}>
+    <div style={{ width, background: "var(--ae-bg-surface)", borderRight: "1px solid var(--ae-border)", display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 8, gap: 4, flexShrink: 0 }}>
       {tools.map((t) => (
         <ToolButton
           key={t}
@@ -100,7 +101,7 @@ export function Toolbar({ tools, activeTool, panMode, onToolChange, onPanModeCha
       ))}
 
       {/* Divider */}
-      <div style={{ width: 24, height: 1, background: "#333333", margin: "4px 0" }} />
+      <div style={{ width: 24, height: 1, background: "var(--ae-border)", margin: "4px 0" }} />
 
       {/* Hand tool */}
       <ToolButton

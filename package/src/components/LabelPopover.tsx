@@ -65,14 +65,14 @@ export function LabelPopover({ labels, position, onSelect, onCancel, onCreateLab
       left: Math.min(position.x, window.innerWidth - 210),
       top: Math.min(position.y, window.innerHeight - 320),
       width: 200,
-      background: "#1e1e1e",
-      border: "1px solid #333333",
+      background: "var(--ae-bg-surface)",
+      border: "1px solid var(--ae-border)",
       borderRadius: 6,
       boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
       zIndex: 200,
       overflow: "hidden",
     }}>
-      <div style={{ padding: "6px 8px", borderBottom: "1px solid #2a2a2a" }}>
+      <div style={{ padding: "6px 8px", borderBottom: "1px solid var(--ae-border-subtle)" }}>
         <input
           ref={inputRef}
           value={query}
@@ -80,8 +80,8 @@ export function LabelPopover({ labels, position, onSelect, onCancel, onCreateLab
           onKeyDown={handleKeyDown}
           placeholder="Search or create label…"
           style={{
-            width: "100%", background: "#2a2a2a", border: "1px solid #333333",
-            borderRadius: 4, padding: "4px 8px", color: "#e8e8e8",
+            width: "100%", background: "var(--ae-bg-elevated)", border: "1px solid var(--ae-border)",
+            borderRadius: 4, padding: "4px 8px", color: "var(--ae-text-primary)",
             fontSize: 12, outline: "none", boxSizing: "border-box",
           }}
         />
@@ -89,7 +89,7 @@ export function LabelPopover({ labels, position, onSelect, onCancel, onCreateLab
 
       <div style={{ maxHeight: 220, overflowY: "auto" }}>
         {filtered.length === 0 && !showCreate && (
-          <div style={{ padding: "8px 12px", color: "#555555", fontSize: 12 }}>No results</div>
+          <div style={{ padding: "8px 12px", color: "var(--ae-text-muted)", fontSize: 12 }}>No results</div>
         )}
 
         {filtered.map((lm, i) => (
@@ -100,8 +100,8 @@ export function LabelPopover({ labels, position, onSelect, onCancel, onCreateLab
             style={{
               display: "flex", alignItems: "center", gap: 8,
               padding: "6px 12px", cursor: "pointer",
-              background: i === cursor ? "#2563eb" : "transparent",
-              color: i === cursor ? "#ffffff" : "#e8e8e8",
+              background: i === cursor ? "var(--ae-accent)" : "transparent",
+              color: i === cursor ? "#ffffff" : "var(--ae-text-primary)",
               fontSize: 13,
             }}
           >
@@ -113,7 +113,7 @@ export function LabelPopover({ labels, position, onSelect, onCancel, onCreateLab
         {showCreate && (
           <>
             {filtered.length > 0 && (
-              <div style={{ height: 1, background: "#2a2a2a", margin: "2px 0" }} />
+              <div style={{ height: 1, background: "var(--ae-border-subtle)", margin: "2px 0" }} />
             )}
             <div
               onClick={handleCreate}
@@ -121,8 +121,8 @@ export function LabelPopover({ labels, position, onSelect, onCancel, onCreateLab
               style={{
                 display: "flex", alignItems: "center", gap: 8,
                 padding: "6px 12px", cursor: "pointer",
-                background: cursor === filtered.length ? "#2563eb" : "transparent",
-                color: cursor === filtered.length ? "#ffffff" : "#22c55e",
+                background: cursor === filtered.length ? "var(--ae-accent)" : "transparent",
+                color: cursor === filtered.length ? "#ffffff" : "var(--ae-success)",
                 fontSize: 12,
               }}
             >
