@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useState } from "react";
-import type { CanonicalAnnotation } from "@neura/annotation-engine";
+import type { CanonicalAnnotation, ThemeVars } from "@neura/annotation-engine";
 import { labelRegistry } from "../fixtures/label-registry";
 import { adaptEngineA } from "../lib/adapters";
 import { adaptEngineB } from "../lib/adapters";
@@ -19,6 +19,25 @@ const AnnotationCanvas = dynamic(
 );
 
 const FLOOR_PLAN_URL = "/floorplan.svg";
+
+// Ccript Agency design system — deep charcoal + warm orange
+const ccriptTheme: Partial<ThemeVars> = {
+  bgBase:        "#0C0C0C",
+  bgSurface:     "#161616",
+  bgElevated:    "#1F1F1F",
+  bgCanvas:      "#080808",
+  border:        "#2A2A2A",
+  borderSubtle:  "#1A1A1A",
+  textPrimary:   "#F5F5F5",
+  textSecondary: "#8A8A8A",
+  textMuted:     "#4A4A4A",
+  accent:        "#F97316",
+  accentHover:   "#EA6C0A",
+  danger:        "#EF4444",
+  success:       "#22C55E",
+  handleFill:    "#FFFFFF",
+  selection:     "rgba(249,115,22,0.15)",
+};
 
 type Engine = "A" | "B" | "C" | "D";
 
@@ -46,38 +65,69 @@ export default function Page() {
         display: "flex",
         flexDirection: "column",
         height: "100vh",
-        background: "#141414",
+        background: ccriptTheme.bgBase,
+        fontFamily: "system-ui,-apple-system,'Segoe UI',sans-serif",
       }}
     >
-      {/* Fixture selector */}
+      {/* Harness toolbar */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
           gap: 8,
-          padding: "6px 16px",
-          background: "#1e1e1e",
-          borderBottom: "1px solid #333333",
+          padding: "0 16px",
+          height: 40,
+          background: ccriptTheme.bgSurface,
+          borderBottom: `1px solid ${ccriptTheme.border}`,
           flexShrink: 0,
         }}
       >
-        <span style={{ fontSize: 12, color: "#8a8a8a", marginRight: 4 }}>
+        {/* Logo mark */}
+        <span style={{
+          fontSize: 13,
+          fontWeight: 600,
+          color: ccriptTheme.textPrimary,
+          letterSpacing: "0.02em",
+          marginRight: 12,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+        }}>
+          <span style={{
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            background: ccriptTheme.accent,
+            display: "inline-block",
+            flexShrink: 0,
+          }} />
+          neura
+          <span style={{ color: ccriptTheme.accent }}>·</span>
+          annotation
+        </span>
+
+        {/* Divider */}
+        <div style={{ width: 1, height: 18, background: ccriptTheme.border, marginRight: 8 }} />
+
+        <span style={{ fontSize: 11, color: ccriptTheme.textSecondary, marginRight: 4 }}>
           Engine fixture:
         </span>
+
         {(["A", "B", "C", "D"] as Engine[]).map((e) => (
           <button
             key={e}
             onClick={() => setEngine(e)}
             style={{
               padding: "3px 12px",
-              background: engine === e ? "#2563eb" : "#2a2a2a",
-              color: engine === e ? "#ffffff" : "#8a8a8a",
-              border: "1px solid",
-              borderColor: engine === e ? "#2563eb" : "#333333",
+              background: engine === e ? ccriptTheme.accent : ccriptTheme.bgElevated,
+              color: engine === e ? "#ffffff" : ccriptTheme.textSecondary,
+              border: `1px solid ${engine === e ? ccriptTheme.accent! : ccriptTheme.border!}`,
               borderRadius: 4,
               cursor: "pointer",
-              fontSize: 12,
+              fontSize: 11,
               fontFamily: "system-ui",
+              fontWeight: engine === e ? 600 : 400,
+              transition: "background 0.15s, color 0.15s, border-color 0.15s",
             }}
           >
             Engine {e}
@@ -92,6 +142,7 @@ export default function Page() {
           image={FLOOR_PLAN_URL}
           labels={labels}
           annotations={annotations}
+          theme={ccriptTheme}
           onSave={(saved) => {
             console.log("[annotation-engine] onSave", saved);
           }}
