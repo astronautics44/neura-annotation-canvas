@@ -7,7 +7,7 @@
   },
   "dependencies": {
     "@neura/annotation-engine": "*",
-    "next": "^15.3.3",
+    "next": "^16.2.7",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
