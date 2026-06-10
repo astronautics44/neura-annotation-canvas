@@ -7,7 +7,7 @@ import { LabelPopover } from "./LabelPopover";
 interface Props {
   annotations: CanonicalAnnotation[];
   labels: LabelMap[];
-  selectedId: string | null;
+  selectedIds: string[];
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onRelabel: (id: string, label: string) => void;
@@ -19,7 +19,7 @@ interface Props {
 export function LabelPanel({
   annotations,
   labels,
-  selectedId,
+  selectedIds,
   onSelect,
   onDelete,
   onRelabel,
@@ -302,7 +302,7 @@ export function LabelPanel({
               {/* Rows */}
               {!isCollapsed &&
                 items.map((ann) => {
-                  const isSelected = selectedId === ann.id;
+                  const isSelected = selectedIds.includes(ann.id);
                   const isHovered = hoveredRow === ann.id;
                   return (
                     <div
@@ -454,9 +454,9 @@ export function LabelPanel({
                   color: "var(--ae-text-muted)",
                   cursor: "pointer",
                   background:
-                    selectedId === ann.id ? "var(--ae-selection)" : "transparent",
+                    selectedIds.includes(ann.id) ? "var(--ae-selection)" : "transparent",
                   borderLeft:
-                    selectedId === ann.id
+                    selectedIds.includes(ann.id)
                       ? "2px solid var(--ae-accent)"
                       : "2px solid transparent",
                 }}

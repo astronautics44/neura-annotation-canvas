@@ -28,16 +28,24 @@ type Action =
   | { type: "ADD"; payload: CanonicalAnnotation }
   | { type: "UPDATE"; payload: CanonicalAnnotation }
   | { type: "DELETE"; id: string }
-  | { type: "MOVE"; id: string; delta: [number, number] };
+  | { type: "DELETE_MANY"; ids: string[] }
+  | { type: "MOVE"; id: string; delta: [number, number] }
+  | { type: "MOVE_MANY"; ids: string[]; delta: [number, number] };
 
 function reducer(state: CanonicalAnnotation[], action: Action): CanonicalAnnotation[] {
   switch (action.type) {
-    case "LOAD":   return action.payload;
-    case "ADD":    return [...state, action.payload];
-    case "UPDATE": return state.map((a) => (a.id === action.payload.id ? action.payload : a));
-    case "DELETE": return state.filter((a) => a.id !== action.id);
-    case "MOVE":   return state.map((a) =>
+    case "LOAD":        return action.payload;
+    case "ADD":         return [...state, action.payload];
+    case "UPDATE":      return state.map((a) => (a.id === action.payload.id ? action.payload : a));
+    case "DELETE":      return state.filter((a) => a.id !== action.id);
+    case "DELETE_MANY": return state.filter((a) => !action.ids.includes(a.id));
+    case "MOVE":        return state.map((a) =>
       a.id !== action.id ? a : {
+        ...a,
+        points: a.points.map(([x, y]) => [x + action.delta[0], y + action.delta[1]] as [number, number]),
+      });
+    case "MOVE_MANY":   return state.map((a) =>
+      !action.ids.includes(a.id) ? a : {
         ...a,
         points: a.points.map(([x, y]) => [x + action.delta[0], y + action.delta[1]] as [number, number]),
       });
@@ -49,14 +57,31 @@ function reducer(state: CanonicalAnnotation[], action: Action): CanonicalAnnotat
 // ---------------------------------------------------------------------------
 
 interface Props {
+  // --- required ---
   image: string;
   labels: LabelMap[];
+
+  // --- data ---
   annotations?: CanonicalAnnotation[];
   onSave: (annotations: CanonicalAnnotation[]) => void;
   onChange?: (annotations: CanonicalAnnotation[]) => void;
   onLabelsChange?: (labels: LabelMap[]) => void;
+
+  // --- tools ---
   tools?: ToolType[];
+
+  // --- behavior ---
   readonly?: boolean;
+
+  // --- feature toggles ---
+  /** Show zoom in / zoom out / fit buttons in the status bar. Default: true */
+  showZoomControls?: boolean;
+  /** Show undo / redo buttons in the toolbar. Default: true */
+  showUndoRedo?: boolean;
+  /** Enable Ctrl/Cmd+A to select all annotations. Default: true */
+  enableSelectAll?: boolean;
+
+  // --- layout ---
   className?: string;
   theme?: Partial<ThemeVars>;
 }
@@ -139,6 +164,9 @@ export function AnnotationCanvas({
   onLabelsChange,
   tools,
   readonly = false,
+  showZoomControls = true,
+  showUndoRedo = true,
+  enableSelectAll = true,
   className,
   theme: themeProp,
 }: Props) {
@@ -160,10 +188,14 @@ export function AnnotationCanvas({
   const annotationsRef = useRef(annotations);
   annotationsRef.current = annotations;
 
+  // Expose undo/redo availability to the toolbar
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+
   const [tool, setTool] = useState<ToolType>("select");
-  const [panMode, setPanMode] = useState(false); // H hand tool
+  const [panMode, setPanMode] = useState(false);
   const [draw, setDraw] = useState<DrawState>({ phase: "idle" });
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
   const [scale, setScale] = useState(1);
@@ -179,6 +211,8 @@ export function AnnotationCanvas({
     past.current = [...past.current, [...annotationsRef.current]];
     future.current = [];
     if (past.current.length > 100) past.current = past.current.slice(-100);
+    setCanUndo(true);
+    setCanRedo(false);
   }, []);
 
   // Dispatch with undo tracking
@@ -195,6 +229,8 @@ export function AnnotationCanvas({
     if (initialAnnotations) {
       past.current = [];
       future.current = [];
+      setCanUndo(false);
+      setCanRedo(false);
       dispatch({ type: "LOAD", payload: initialAnnotations });
     }
   }, [initialAnnotations]);
@@ -219,6 +255,26 @@ export function AnnotationCanvas({
 
   useEffect(() => { if (img) fitToScreen(); }, [img, fitToScreen]);
 
+  const handleUndo = useCallback(() => {
+    if (past.current.length === 0) return;
+    future.current = [annotationsRef.current, ...future.current];
+    const prev = past.current[past.current.length - 1]!;
+    past.current = past.current.slice(0, -1);
+    dispatch({ type: "LOAD", payload: prev });
+    setCanUndo(past.current.length > 0);
+    setCanRedo(true);
+  }, []);
+
+  const handleRedo = useCallback(() => {
+    if (future.current.length === 0) return;
+    past.current = [...past.current, annotationsRef.current];
+    const next = future.current[0]!;
+    future.current = future.current.slice(1);
+    dispatch({ type: "LOAD", payload: next });
+    setCanUndo(true);
+    setCanRedo(future.current.length > 0);
+  }, []);
+
   // Keyboard shortcuts
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -227,11 +283,7 @@ export function AnnotationCanvas({
       // Undo: Cmd/Ctrl+Z
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === "z") {
         e.preventDefault();
-        if (past.current.length === 0) return;
-        future.current = [annotationsRef.current, ...future.current];
-        const prev = past.current[past.current.length - 1]!;
-        past.current = past.current.slice(0, -1);
-        dispatch({ type: "LOAD", payload: prev });
+        handleUndo();
         return;
       }
 
@@ -239,11 +291,14 @@ export function AnnotationCanvas({
       if (((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "z") ||
           (e.ctrlKey && e.key === "y")) {
         e.preventDefault();
-        if (future.current.length === 0) return;
-        past.current = [...past.current, annotationsRef.current];
-        const next = future.current[0]!;
-        future.current = future.current.slice(1);
-        dispatch({ type: "LOAD", payload: next });
+        handleRedo();
+        return;
+      }
+
+      // Select all: Cmd/Ctrl+A
+      if (enableSelectAll && (e.metaKey || e.ctrlKey) && e.key === "a") {
+        e.preventDefault();
+        setSelectedIds(annotationsRef.current.map((a) => a.id));
         return;
       }
 
@@ -262,9 +317,13 @@ export function AnnotationCanvas({
       if (e.key === "l" || e.key === "L") { setPanMode(false); setTool("line"); setDraw({ phase: "idle" }); return; }
       if (e.key === "n" || e.key === "N") { setPanMode(false); setTool("point"); setDraw({ phase: "idle" }); return; }
 
-      if ((e.key === "Delete" || e.key === "Backspace") && selectedId) {
-        dispatchAndNotify({ type: "DELETE", id: selectedId });
-        setSelectedId(null);
+      if ((e.key === "Delete" || e.key === "Backspace") && selectedIds.length > 0) {
+        if (selectedIds.length === 1) {
+          dispatchAndNotify({ type: "DELETE", id: selectedIds[0]! });
+        } else {
+          dispatchAndNotify({ type: "DELETE_MANY", ids: selectedIds });
+        }
+        setSelectedIds([]);
         return;
       }
 
@@ -280,7 +339,7 @@ export function AnnotationCanvas({
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp); };
-  }, [draw, fitToScreen, onSave, selectedId, dispatchAndNotify]);
+  }, [draw, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify]);
 
   // ---------------------------------------------------------------------------
   // Stage event handlers
@@ -310,7 +369,7 @@ export function AnnotationCanvas({
     const isStageClick = e.target === e.target.getStage() || e.target.name() === "bg-image";
     const imgPos = getImagePos(e);
 
-    if (tool === "select") { if (isStageClick) setSelectedId(null); return; }
+    if (tool === "select") { if (isStageClick) setSelectedIds([]); return; }
     if (tool === "bbox") { setDraw({ phase: "bbox-drawing", start: imgPos, cur: imgPos }); return; }
 
     if (tool === "polygon") {
@@ -361,7 +420,13 @@ export function AnnotationCanvas({
     if (draggingAnnotation) {
       const dx = imgPos[0] - draggingAnnotation.startImg[0];
       const dy = imgPos[1] - draggingAnnotation.startImg[1];
-      dispatchAndNotify({ type: "MOVE", id: draggingAnnotation.id, delta: [dx, dy] });
+      // Move all selected annotations when dragging one that belongs to the selection
+      const idsToMove = selectedIds.includes(draggingAnnotation.id) ? selectedIds : [draggingAnnotation.id];
+      if (idsToMove.length === 1) {
+        dispatchAndNotify({ type: "MOVE", id: idsToMove[0]!, delta: [dx, dy] });
+      } else {
+        dispatchAndNotify({ type: "MOVE_MANY", ids: idsToMove, delta: [dx, dy] });
+      }
       setDraggingAnnotation({ ...draggingAnnotation, startImg: imgPos });
     }
 
@@ -386,7 +451,7 @@ export function AnnotationCanvas({
         setDraggingVertex({ ...draggingVertex, startImg: imgPos });
       }
     }
-  }, [draw, stagePos, scale, draggingAnnotation, draggingHandle, draggingVertex, dispatchAndNotify]);
+  }, [draw, stagePos, scale, draggingAnnotation, draggingHandle, draggingVertex, selectedIds, dispatchAndNotify]);
 
   const handleStageMouseUp = useCallback((e: KonvaEventObject<MouseEvent>) => {
     if (panStart.current) {
@@ -423,15 +488,18 @@ export function AnnotationCanvas({
   const handleAnnotationClick = useCallback((id: string, e: KonvaEventObject<MouseEvent>) => {
     if (tool !== "select" || readonly || panMode) return;
     e.cancelBubble = true;
-    setSelectedId(id);
+    setSelectedIds([id]);
   }, [tool, readonly, panMode]);
 
   const handleAnnotationMouseDown = useCallback((id: string, e: KonvaEventObject<MouseEvent>) => {
     if (tool !== "select" || readonly || panMode) return;
     e.cancelBubble = true;
-    setSelectedId(id);
+    // Keep existing selection when clicking a selected annotation (so drag moves all)
+    if (!selectedIds.includes(id)) {
+      setSelectedIds([id]);
+    }
     setDraggingAnnotation({ id, startImg: getImagePos(e) });
-  }, [tool, readonly, panMode, getImagePos]);
+  }, [tool, readonly, panMode, getImagePos, selectedIds]);
 
   const handleLabelSelect = useCallback((label: string) => {
     if (draw.phase === "bbox-pending") {
@@ -444,14 +512,12 @@ export function AnnotationCanvas({
       dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "point", points: [draw.pt], label, source: "human" } });
     }
     setDraw({ phase: "idle" });
-    setTool("select");
   }, [draw, dispatchAndNotify]);
 
   const handlePopoverCancel = useCallback(() => setDraw({ phase: "idle" }), []);
 
   const handleCreateLabel = useCallback((displayName: string): string => {
     const base = slugify(displayName);
-    // ensure unique canonicalClassId
     let id = base;
     let n = 2;
     while (labels.some((l) => l.canonicalClassId === id)) { id = `${base}-${n++}`; }
@@ -474,6 +540,14 @@ export function AnnotationCanvas({
 
   const pPos = popoverPos();
 
+  // Detect when the image is scrolled/panned entirely out of view
+  const imageOutOfView = img != null && (
+    stagePos.x + img.width * scale < 0 ||
+    stagePos.x > containerSize.w ||
+    stagePos.y + img.height * scale < 0 ||
+    stagePos.y > containerSize.h
+  );
+
   const stageCursor = isPanning ? "grabbing"
     : panMode ? "grab"
     : spaceDown ? "grab"
@@ -487,9 +561,11 @@ export function AnnotationCanvas({
   const renderAnnotation = (ann: CanonicalAnnotation) => {
     const lm = labels.find((l) => l.canonicalClassId === ann.label);
     const color = lm?.color ?? "#ffffff";
-    const isSelected = selectedId === ann.id;
+    const isSelected = selectedIds.includes(ann.id);
     const isHovered = hoveredId === ann.id;
     const isEngine = ann.source === "engine";
+    // Show resize/vertex handles only when exactly this annotation is selected alone
+    const showHandles = isSelected && selectedIds.length === 1;
 
     const baseStrokeWidth = isEngine ? 1.5 : 2;
     const strokeWidth = isSelected ? 2 : isHovered ? 2.5 : baseStrokeWidth;
@@ -536,7 +612,7 @@ export function AnnotationCanvas({
       return (
         <Group key={ann.id}>
           <Rect x={x} y={y} width={w} height={h} fill={hexToRgba(color, fillAlpha)} {...commonProps} />
-          {isSelected && bboxHandles(x, y, w, h).map((handle, i) => (
+          {showHandles && bboxHandles(x, y, w, h).map((handle, i) => (
             <Circle key={i} x={handle.pos[0]} y={handle.pos[1]}
               radius={HANDLE_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={2 / scale}
               onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
@@ -554,7 +630,7 @@ export function AnnotationCanvas({
       return (
         <Group key={ann.id}>
           <Line points={ann.points.flatMap(([x, y]) => [x, y])} closed fill={hexToRgba(color, fillAlpha)} {...commonProps} />
-          {isSelected && ann.points.map(([x, y], i) => (
+          {showHandles && ann.points.map(([x, y], i) => (
             <Circle key={i} x={x} y={y} radius={VERTEX_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={1.5 / scale}
               onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
                 e.cancelBubble = true;
@@ -571,7 +647,7 @@ export function AnnotationCanvas({
       return (
         <Group key={ann.id}>
           <Line points={ann.points.flatMap(([x, y]) => [x, y])} hitStrokeWidth={10 / scale} {...commonProps} />
-          {isSelected && ann.points.map(([x, y], i) => (
+          {showHandles && ann.points.map(([x, y], i) => (
             <Circle key={i} x={x} y={y} radius={HANDLE_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={2 / scale}
               onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
                 e.cancelBubble = true;
@@ -652,6 +728,11 @@ export function AnnotationCanvas({
           onPanModeChange={setPanMode}
           readonly={readonly}
           width={resolved.toolbarWidth}
+          showUndoRedo={showUndoRedo}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
         />
         <div ref={containerRef} style={{ flex: 1, background: "var(--ae-bg-canvas)", position: "relative", overflow: "hidden", cursor: stageCursor }}>
           <Stage
@@ -674,6 +755,19 @@ export function AnnotationCanvas({
               {renderDraw()}
             </Layer>
           </Stage>
+          {imageOutOfView && (
+            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", zIndex: 10 }}>
+              <button
+                onClick={fitToScreen}
+                style={{ pointerEvents: "auto", display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", background: "var(--ae-bg-surface)", border: "1px solid var(--ae-border)", borderRadius: 8, color: "var(--ae-text-primary)", fontSize: 13, cursor: "pointer", boxShadow: "0 4px 16px rgba(0,0,0,0.4)", fontFamily: "inherit" }}
+              >
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M1 6V1h5M10 1h5v5M15 10v5h-5M6 15H1v-5"/>
+                </svg>
+                Reset View
+              </button>
+            </div>
+          )}
           {pPos && (
             <LabelPopover
               labels={labels}
@@ -687,12 +781,12 @@ export function AnnotationCanvas({
         <LabelPanel
           annotations={annotations}
           labels={labels}
-          selectedId={selectedId}
+          selectedIds={selectedIds}
           onCreateLabel={readonly ? undefined : handleCreateLabel}
           width={resolved.panelWidth}
           height={containerSize.h}
           onSelect={(id) => {
-            setSelectedId(id);
+            setSelectedIds([id]);
             const ann = annotations.find((a) => a.id === id);
             if (!ann) return;
             const c = ann.type === "point" ? ann.points[0]! : centroid(ann.points);
@@ -702,17 +796,79 @@ export function AnnotationCanvas({
               setStagePos({ x: containerSize.w / 2 - c[0] * scale, y: containerSize.h / 2 - c[1] * scale });
             }
           }}
-          onDelete={(id) => { dispatchAndNotify({ type: "DELETE", id }); if (selectedId === id) setSelectedId(null); }}
+          onDelete={(id) => {
+            dispatchAndNotify({ type: "DELETE", id });
+            setSelectedIds((prev) => prev.filter((sid) => sid !== id));
+          }}
           onRelabel={(id, label) => {
             const ann = annotations.find((a) => a.id === id);
             if (ann) dispatchAndNotify({ type: "UPDATE", payload: { ...ann, label } });
           }}
         />
       </div>
-      <div style={{ height: resolved.statusBarHeight, background: "var(--ae-bg-surface)", borderTop: "1px solid var(--ae-border)", display: "flex", alignItems: "center", padding: "0 12px", justifyContent: "space-between", fontSize: 11, color: "var(--ae-text-secondary)" }}>
-        <span>Zoom: <span style={{ fontFamily: "'JetBrains Mono','Fira Code',monospace" }}>{Math.round(scale * 100)}%</span></span>
+
+      {/* Status bar */}
+      <div style={{ height: resolved.statusBarHeight, background: "var(--ae-bg-surface)", borderTop: "1px solid var(--ae-border)", display: "flex", alignItems: "center", padding: "0 12px", justifyContent: "space-between", fontSize: 11, color: "var(--ae-text-secondary)", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span>Zoom: <span style={{ fontFamily: "'JetBrains Mono','Fira Code',monospace" }}>{Math.round(scale * 100)}%</span></span>
+          {showZoomControls && (
+            <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+              {/* Fit to screen */}
+              <button
+                title="Fit to screen (Ctrl+0)"
+                onClick={fitToScreen}
+                style={zoomBtnStyle}
+                onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--ae-bg-elevated)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-primary)"; }}
+                onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-secondary)"; }}
+              >
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M1 6V1h5M10 1h5v5M15 10v5h-5M6 15H1v-5"/>
+                </svg>
+              </button>
+              {/* Zoom out */}
+              <button
+                title="Zoom out (Ctrl+-)"
+                onClick={() => setScale((s) => Math.max(s / 1.2, MIN_ZOOM))}
+                style={zoomBtnStyle}
+                onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--ae-bg-elevated)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-primary)"; }}
+                onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-secondary)"; }}
+              >
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <circle cx="7" cy="7" r="5"/><line x1="10.5" y1="10.5" x2="14" y2="14"/><line x1="4.5" y1="7" x2="9.5" y2="7"/>
+                </svg>
+              </button>
+              {/* Zoom in */}
+              <button
+                title="Zoom in (Ctrl+=)"
+                onClick={() => setScale((s) => Math.min(s * 1.2, MAX_ZOOM))}
+                style={zoomBtnStyle}
+                onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--ae-bg-elevated)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-primary)"; }}
+                onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-secondary)"; }}
+              >
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <circle cx="7" cy="7" r="5"/><line x1="10.5" y1="10.5" x2="14" y2="14"/><line x1="7" y1="4.5" x2="7" y2="9.5"/><line x1="4.5" y1="7" x2="9.5" y2="7"/>
+                </svg>
+              </button>
+            </div>
+          )}
+        </div>
         <span style={{ fontFamily: "'JetBrains Mono','Fira Code',monospace" }}>x: {Math.round(cursorImg[0])} y: {Math.round(cursorImg[1])}</span>
       </div>
     </div>
   );
 }
+
+const zoomBtnStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 20,
+  height: 20,
+  background: "transparent",
+  border: "none",
+  borderRadius: 4,
+  cursor: "pointer",
+  color: "var(--ae-text-secondary)",
+  padding: 0,
+  transition: "background 0.1s, color 0.1s",
+};

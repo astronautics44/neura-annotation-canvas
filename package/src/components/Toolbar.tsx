@@ -11,6 +11,11 @@ interface Props {
   onPanModeChange: (on: boolean) => void;
   readonly: boolean;
   width?: number;
+  showUndoRedo?: boolean;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  onUndo?: () => void;
+  onRedo?: () => void;
 }
 
 type ButtonDef = { id: string; label: string; shortcut: string; icon: React.ReactNode };
@@ -41,6 +46,16 @@ const TOOL_META: Record<ToolType, ButtonDef> = {
 const HAND_BTN: ButtonDef = {
   id: "hand", label: "Hand", shortcut: "H",
   icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/><path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>,
+};
+
+const UNDO_BTN: ButtonDef = {
+  id: "undo", label: "Undo", shortcut: "Ctrl+Z",
+  icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"/><path d="M3 13C5.4 7.4 12 5 17 8.5s6 10.8 0 14.5"/></svg>,
+};
+
+const REDO_BTN: ButtonDef = {
+  id: "redo", label: "Redo", shortcut: "Ctrl+Shift+Z",
+  icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 7v6h-6"/><path d="M21 13C18.6 7.4 12 5 7 8.5S1 19.3 7 23"/></svg>,
 };
 
 function ToolButton({ def, isActive, disabled, tooltip, onMouseEnter, onMouseLeave, onClick }: {
@@ -82,7 +97,24 @@ function ToolButton({ def, isActive, disabled, tooltip, onMouseEnter, onMouseLea
   );
 }
 
-export function Toolbar({ tools, activeTool, panMode, onToolChange, onPanModeChange, readonly, width = 48 }: Props) {
+function Divider() {
+  return <div style={{ width: 24, height: 1, background: "var(--ae-border)", margin: "4px 0" }} />;
+}
+
+export function Toolbar({
+  tools,
+  activeTool,
+  panMode,
+  onToolChange,
+  onPanModeChange,
+  readonly,
+  width = 48,
+  showUndoRedo = true,
+  canUndo = false,
+  canRedo = false,
+  onUndo,
+  onRedo,
+}: Props) {
   const [tooltip, setTooltip] = useState<string | null>(null);
 
   return (
@@ -100,8 +132,7 @@ export function Toolbar({ tools, activeTool, panMode, onToolChange, onPanModeCha
         />
       ))}
 
-      {/* Divider */}
-      <div style={{ width: 24, height: 1, background: "var(--ae-border)", margin: "4px 0" }} />
+      <Divider />
 
       {/* Hand tool */}
       <ToolButton
@@ -113,6 +144,30 @@ export function Toolbar({ tools, activeTool, panMode, onToolChange, onPanModeCha
         onMouseLeave={() => setTooltip(null)}
         onClick={() => onPanModeChange(!panMode)}
       />
+
+      {showUndoRedo && (
+        <>
+          <Divider />
+          <ToolButton
+            def={UNDO_BTN}
+            isActive={false}
+            disabled={!canUndo}
+            tooltip={tooltip}
+            onMouseEnter={() => setTooltip("undo")}
+            onMouseLeave={() => setTooltip(null)}
+            onClick={() => onUndo?.()}
+          />
+          <ToolButton
+            def={REDO_BTN}
+            isActive={false}
+            disabled={!canRedo}
+            tooltip={tooltip}
+            onMouseEnter={() => setTooltip("redo")}
+            onMouseLeave={() => setTooltip(null)}
+            onClick={() => onRedo?.()}
+          />
+        </>
+      )}
     </div>
   );
 }

@@ -143,6 +143,11 @@ interface AnnotationCanvasProps {
   // Behavior
   readonly?: boolean; // disables all editing; view mode only
 
+  // Feature toggles — all default to true
+  showZoomControls?: boolean; // zoom-in / zoom-out / fit buttons in the status bar
+  showUndoRedo?: boolean;     // undo / redo buttons in the toolbar
+  enableSelectAll?: boolean;  // Ctrl/Cmd+A selects all annotations
+
   // Layout
   className?: string; // applied to the outer container div
 
@@ -415,20 +420,27 @@ The theme values are injected as CSS custom properties on the root element (`--a
 ### Toolbar layout
 
 ```
-┌────────────────────────────────────────────────────┐
-│  Toolbar (left, 48px)    Canvas    Label Panel (220px) │
-│  ┌────┬────────────────────────────────┬──────────┐ │
-│  │ V  │                                │          │ │
-│  │ B  │     Konva canvas stage         │  Annot.  │ │
-│  │ P  │     (fills remaining space)    │  list    │ │
-│  │ L  │                                │          │ │
-│  │ N  │                                │          │ │
-│  │────│                                │          │ │
-│  │ H  │                                │          │ │
-│  └────┴────────────────────────────────┴──────────┘ │
-│  Status bar (bottom, 28px) — Zoom % | cursor x y    │
-└────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│  Toolbar (left, 48px)    Canvas    Label Panel (220px)     │
+│  ┌────┬──────────────────────────────────────┬──────────┐  │
+│  │ V  │                                      │          │  │
+│  │ B  │     Konva canvas stage               │  Annot.  │  │
+│  │ P  │     (fills remaining space)          │  list    │  │
+│  │ L  │                                      │          │  │
+│  │ N  │                                      │          │  │
+│  │────│                                      │          │  │
+│  │ H  │  [Reset View] overlay when           │          │  │
+│  │────│  image is panned out of sight        │          │  │
+│  │ ↺  │                                      │          │  │
+│  │ ↻  │                                      │          │  │
+│  └────┴──────────────────────────────────────┴──────────┘  │
+│  Status bar — Zoom: 100%  [⊡] [−] [+]          x: 0 y: 0  │
+└────────────────────────────────────────────────────────────┘
 ```
+
+- Undo (↺) and Redo (↻) buttons appear below the Hand tool when `showUndoRedo` is true (default).
+- Zoom buttons (fit ⊡, zoom-out −, zoom-in +) appear in the status bar when `showZoomControls` is true (default).
+- A **Reset View** button floats in the centre of the canvas whenever the image is panned entirely out of view.
 
 ### Tools and keyboard shortcuts
 
@@ -447,16 +459,54 @@ The theme values are injected as CSS custom properties on the root element (`--a
 | --------------- | ------------------------------------------------- |
 | Zoom in/out     | Scroll wheel (centered on cursor)                 |
 | Pan             | `Space` + drag, or middle-mouse drag, or `H` tool |
-| Fit to screen   | `Cmd/Ctrl` + `0`                                  |
-| Zoom in         | `Cmd/Ctrl` + `=`                                  |
-| Zoom out        | `Cmd/Ctrl` + `-`                                  |
+| Fit to screen   | `Cmd/Ctrl` + `0`, or fit button (⊡) in status bar |
+| Zoom in         | `Cmd/Ctrl` + `=`, or + button in status bar       |
+| Zoom out        | `Cmd/Ctrl` + `-`, or − button in status bar       |
+| Select all      | `Cmd/Ctrl` + `A` (when `enableSelectAll` is true) |
 | Save            | `Cmd/Ctrl` + `S`                                  |
-| Undo            | `Cmd/Ctrl` + `Z`                                  |
-| Redo            | `Cmd/Ctrl` + `Shift` + `Z` or `Ctrl` + `Y`        |
+| Undo            | `Cmd/Ctrl` + `Z`, or ↺ button in toolbar          |
+| Redo            | `Cmd/Ctrl` + `Shift` + `Z` / `Ctrl+Y`, or ↻ button |
 | Cancel draw     | `Escape`                                          |
-| Delete selected | `Delete` or `Backspace`                           |
+| Delete selected | `Delete` or `Backspace` (works with multi-select) |
 
 Zoom range: 5% – 2000%. The status bar shows the current zoom and cursor position in image pixel coordinates.
+
+### Multi-select
+
+When `enableSelectAll` is true (default), `Ctrl/Cmd+A` selects all annotations simultaneously. With multiple annotations selected:
+
+- All selected annotations highlight (filled state, no resize handles)
+- `Delete` / `Backspace` deletes the entire selection in a single undo step
+- Dragging a selected annotation moves **all** selected annotations together
+- Clicking any single annotation (or empty canvas) collapses back to a single/no selection
+
+---
+
+## Feature toggles
+
+All three toggles default to `true`. Set any to `false` to hide the feature from that client.
+
+```tsx
+// Full feature set (default)
+<AnnotationCanvas
+  showZoomControls={true}   // zoom in/out/fit buttons in status bar
+  showUndoRedo={true}       // undo/redo buttons in toolbar (Ctrl+Z still works)
+  enableSelectAll={true}    // Ctrl+A selects all annotations
+  ...
+/>
+
+// View-only embed — minimal chrome
+<AnnotationCanvas
+  readonly={true}
+  showZoomControls={false}
+  showUndoRedo={false}
+  enableSelectAll={false}
+  tools={["select"]}
+  ...
+/>
+```
+
+> **Note:** Disabling `showUndoRedo` hides the toolbar buttons but does **not** disable the `Ctrl+Z` / `Ctrl+Shift+Z` keyboard shortcuts. If you need to disable undo/redo entirely, combine `showUndoRedo={false}` with `readonly={true}`.
 
 ### Label selector popover
 
@@ -489,7 +539,7 @@ All state lives inside `AnnotationCanvas`. No external store required.
 - `onChange` fires after every mutation (add, update, delete, move)
 - `onLabelsChange` fires when the user creates a new label via the popover
 
-Undo/redo history is kept in-memory (up to 100 steps). It resets when `annotations` prop changes.
+Undo/redo history is kept in-memory (up to 100 steps). It resets when the `annotations` prop changes (e.g. when switching fixtures). The toolbar undo/redo buttons are automatically enabled/disabled based on history availability.
 
 ---
 
