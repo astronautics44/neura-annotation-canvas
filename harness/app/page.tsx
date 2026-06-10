@@ -161,6 +161,11 @@ export default function Page() {
         {/* Feature hints */}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: 11, color: lightTheme.textMuted }}>
+            <kbd style={kbdStyle}>B</kbd> bbox &nbsp;
+            <kbd style={kbdStyle}>C</kbd> circle &nbsp;
+            <kbd style={kbdStyle}>P</kbd> polygon
+          </span>
+          <span style={{ fontSize: 11, color: lightTheme.textMuted }}>
             <kbd style={kbdStyle}>Ctrl+A</kbd> select all
           </span>
           <span style={{ fontSize: 11, color: lightTheme.textMuted }}>
