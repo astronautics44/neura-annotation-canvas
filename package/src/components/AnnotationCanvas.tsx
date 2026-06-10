@@ -26,6 +26,7 @@ import { LabelPopover } from "./LabelPopover";
 type Action =
   | { type: "LOAD"; payload: CanonicalAnnotation[] }
   | { type: "ADD"; payload: CanonicalAnnotation }
+  | { type: "ADD_MANY"; payload: CanonicalAnnotation[] }
   | { type: "UPDATE"; payload: CanonicalAnnotation }
   | { type: "DELETE"; id: string }
   | { type: "DELETE_MANY"; ids: string[] }
@@ -36,6 +37,7 @@ function reducer(state: CanonicalAnnotation[], action: Action): CanonicalAnnotat
   switch (action.type) {
     case "LOAD":        return action.payload;
     case "ADD":         return [...state, action.payload];
+    case "ADD_MANY":    return [...state, ...action.payload];
     case "UPDATE":      return state.map((a) => (a.id === action.payload.id ? action.payload : a));
     case "DELETE":      return state.filter((a) => a.id !== action.id);
     case "DELETE_MANY": return state.filter((a) => !action.ids.includes(a.id));
@@ -206,6 +208,9 @@ export function AnnotationCanvas({
   const [draggingHandle, setDraggingHandle] = useState<{ annId: string; handleIdx: number; startImg: [number, number] } | null>(null);
   const [draggingVertex, setDraggingVertex] = useState<{ annId: string; vertIdx: number; startImg: [number, number] } | null>(null);
 
+  // Internal clipboard — stores copied annotations for Ctrl+C / Ctrl+V
+  const [clipboard, setClipboard] = useState<CanonicalAnnotation[]>([]);
+
   // Snapshot current state before a mutating action (for undo)
   const snapshot = useCallback(() => {
     past.current = [...past.current, [...annotationsRef.current]];
@@ -275,6 +280,22 @@ export function AnnotationCanvas({
     setCanRedo(future.current.length > 0);
   }, []);
 
+  // Clone a set of annotations with fresh IDs and a pixel offset (image-space)
+  const cloneAnnotations = useCallback((
+    ids: string[],
+    offset: [number, number] = [20, 20],
+  ): CanonicalAnnotation[] =>
+    ids
+      .map((id) => annotationsRef.current.find((a) => a.id === id))
+      .filter((a): a is CanonicalAnnotation => a != null)
+      .map((a) => ({
+        ...a,
+        id: newId(),
+        source: "human" as const,
+        points: a.points.map(([x, y]) => [x + offset[0], y + offset[1]] as [number, number]),
+      })),
+  []);
+
   // Keyboard shortcuts
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -292,6 +313,44 @@ export function AnnotationCanvas({
           (e.ctrlKey && e.key === "y")) {
         e.preventDefault();
         handleRedo();
+        return;
+      }
+
+      // Copy: Cmd/Ctrl+C
+      if ((e.metaKey || e.ctrlKey) && e.key === "c" && selectedIds.length > 0) {
+        e.preventDefault();
+        setClipboard(
+          selectedIds
+            .map((id) => annotationsRef.current.find((a) => a.id === id))
+            .filter((a): a is CanonicalAnnotation => a != null),
+        );
+        return;
+      }
+
+      // Paste: Cmd/Ctrl+V
+      if ((e.metaKey || e.ctrlKey) && e.key === "v" && clipboard.length > 0 && !readonly) {
+        e.preventDefault();
+        const copies = clipboard.map((a) => ({
+          ...a,
+          id: newId(),
+          source: "human" as const,
+          points: a.points.map(([x, y]) => [x + 20, y + 20] as [number, number]),
+        }));
+        // Subsequent pastes keep drifting so the user can see them stacking
+        setClipboard(copies);
+        snapshot();
+        dispatch({ type: "ADD_MANY", payload: copies });
+        setSelectedIds(copies.map((c) => c.id));
+        return;
+      }
+
+      // Duplicate in place: Cmd/Ctrl+D
+      if ((e.metaKey || e.ctrlKey) && e.key === "d" && selectedIds.length > 0 && !readonly) {
+        e.preventDefault();
+        const copies = cloneAnnotations(selectedIds);
+        snapshot();
+        dispatch({ type: "ADD_MANY", payload: copies });
+        setSelectedIds(copies.map((c) => c.id));
         return;
       }
 
@@ -339,7 +398,7 @@ export function AnnotationCanvas({
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp); };
-  }, [draw, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify]);
+  }, [draw, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot]);
 
   // ---------------------------------------------------------------------------
   // Stage event handlers
@@ -494,12 +553,27 @@ export function AnnotationCanvas({
   const handleAnnotationMouseDown = useCallback((id: string, e: KonvaEventObject<MouseEvent>) => {
     if (tool !== "select" || readonly || panMode) return;
     e.cancelBubble = true;
+
+    if (e.evt.altKey) {
+      // Alt+drag: duplicate the selection (or just this annotation) and drag the copies
+      const idsToClone = selectedIds.includes(id) ? selectedIds : [id];
+      const copies = cloneAnnotations(idsToClone, [0, 0]);
+      snapshot();
+      dispatch({ type: "ADD_MANY", payload: copies });
+      setSelectedIds(copies.map((c) => c.id));
+      // Drag the copy that corresponds to the annotation the user grabbed
+      const cloneIdx = idsToClone.indexOf(id);
+      const dragId = copies[cloneIdx]?.id ?? copies[0]?.id;
+      if (dragId) setDraggingAnnotation({ id: dragId, startImg: getImagePos(e) });
+      return;
+    }
+
     // Keep existing selection when clicking a selected annotation (so drag moves all)
     if (!selectedIds.includes(id)) {
       setSelectedIds([id]);
     }
     setDraggingAnnotation({ id, startImg: getImagePos(e) });
-  }, [tool, readonly, panMode, getImagePos, selectedIds]);
+  }, [tool, readonly, panMode, getImagePos, selectedIds, cloneAnnotations, snapshot]);
 
   const handleLabelSelect = useCallback((label: string) => {
     if (draw.phase === "bbox-pending") {
