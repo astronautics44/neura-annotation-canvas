@@ -18,41 +18,15 @@ import { newId } from "../utils/ids";
 import { Toolbar } from "./Toolbar";
 import { LabelPanel } from "./LabelPanel";
 import { LabelPopover } from "./LabelPopover";
-
-// ---------------------------------------------------------------------------
-// Reducer
-// ---------------------------------------------------------------------------
-
-type Action =
-  | { type: "LOAD"; payload: CanonicalAnnotation[] }
-  | { type: "ADD"; payload: CanonicalAnnotation }
-  | { type: "ADD_MANY"; payload: CanonicalAnnotation[] }
-  | { type: "UPDATE"; payload: CanonicalAnnotation }
-  | { type: "DELETE"; id: string }
-  | { type: "DELETE_MANY"; ids: string[] }
-  | { type: "MOVE"; id: string; delta: [number, number] }
-  | { type: "MOVE_MANY"; ids: string[]; delta: [number, number] };
-
-function reducer(state: CanonicalAnnotation[], action: Action): CanonicalAnnotation[] {
-  switch (action.type) {
-    case "LOAD":        return action.payload;
-    case "ADD":         return [...state, action.payload];
-    case "ADD_MANY":    return [...state, ...action.payload];
-    case "UPDATE":      return state.map((a) => (a.id === action.payload.id ? action.payload : a));
-    case "DELETE":      return state.filter((a) => a.id !== action.id);
-    case "DELETE_MANY": return state.filter((a) => !action.ids.includes(a.id));
-    case "MOVE":        return state.map((a) =>
-      a.id !== action.id ? a : {
-        ...a,
-        points: a.points.map(([x, y]) => [x + action.delta[0], y + action.delta[1]] as [number, number]),
-      });
-    case "MOVE_MANY":   return state.map((a) =>
-      !action.ids.includes(a.id) ? a : {
-        ...a,
-        points: a.points.map(([x, y]) => [x + action.delta[0], y + action.delta[1]] as [number, number]),
-      });
-  }
-}
+import {
+  MIN_ZOOM, MAX_ZOOM, HANDLE_RADIUS, VERTEX_RADIUS, CLOSE_DIST,
+  AUTO_COLORS, zoomBtnStyle,
+  type DrawState, type Action,
+} from "./canvasConstants";
+import {
+  hexToRgba, bboxToKonva, screenToImage, centroid,
+  bboxHandles, slugify, annotationReducer,
+} from "./canvasHelpers";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -82,78 +56,33 @@ interface Props {
   showUndoRedo?: boolean;
   /** Enable Ctrl/Cmd+A to select all annotations. Default: true */
   enableSelectAll?: boolean;
+  /** Show fullscreen toggle button in the status bar. Default: true */
+  showFullscreen?: boolean;
+
+  // --- scale ---
+  /** Scanner resolution of the image in dots per inch. Required for real-world dimension display. */
+  dpi?: number;
+  /**
+   * Drawing scale extracted by the CV engine (or set by the user).
+   * value: real-world units per 1 paper unit.
+   *   metric 1:100  → { value: 100, unit: "mm", label: "1:100" }
+   *   imperial 1/4"=1' → { value: 48, unit: "in", label: '1/4"=1\'' }
+   */
+  drawingScale?: DrawingScale;
+  /** Fires when the user edits the scale in the status bar. */
+  onDrawingScaleChange?: (scale: DrawingScale) => void;
 
   // --- layout ---
   className?: string;
   theme?: Partial<ThemeVars>;
 }
 
-// Rotating palette for auto-assigned label colors
-const AUTO_COLORS = [
-  "#60A5FA","#34D399","#FBBF24","#F87171","#A78BFA",
-  "#FB923C","#38BDF8","#4ADE80","#E879F9","#F472B6",
-];
-
-function slugify(str: string): string {
-  return str.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "label";
+export interface DrawingScale {
+  value: number;
+  unit: "mm" | "cm" | "m" | "in" | "ft";
+  label: string;
 }
 
-type DrawState =
-  | { phase: "idle" }
-  | { phase: "bbox-drawing"; start: [number, number]; cur: [number, number] }
-  | { phase: "bbox-pending"; points: [[number, number], [number, number]]; pos: [number, number] }
-  | { phase: "polygon-drawing"; pts: [number, number][]; cur: [number, number] }
-  | { phase: "polygon-pending"; pts: [number, number][]; pos: [number, number] }
-  | { phase: "line-drawing"; start: [number, number]; cur: [number, number] }
-  | { phase: "line-pending"; points: [[number, number], [number, number]]; pos: [number, number] }
-  | { phase: "point-pending"; pt: [number, number]; pos: [number, number] }
-  | { phase: "circle-drawing"; center: [number, number]; cur: [number, number] }
-  | { phase: "circle-pending"; points: [[number, number], [number, number]]; pos: [number, number] };
-
-const MIN_ZOOM = 0.05;
-const MAX_ZOOM = 20;
-const HANDLE_RADIUS = 7;
-const VERTEX_RADIUS = 5;
-const CLOSE_DIST = 10;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function hexToRgba(hex: string, alpha: number): string {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `rgba(${r},${g},${b},${alpha})`;
-}
-
-function bboxToKonva(pts: [number, number][]): { x: number; y: number; w: number; h: number } {
-  const x1 = pts[0]![0], y1 = pts[0]![1], x2 = pts[1]![0], y2 = pts[1]![1];
-  return { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) };
-}
-
-function screenToImage(sx: number, sy: number, stageX: number, stageY: number, scale: number): [number, number] {
-  return [(sx - stageX) / scale, (sy - stageY) / scale];
-}
-
-function centroid(pts: [number, number][]): [number, number] {
-  const x = pts.reduce((s, p) => s + p[0], 0) / pts.length;
-  const y = pts.reduce((s, p) => s + p[1], 0) / pts.length;
-  return [x, y];
-}
-
-function bboxHandles(x: number, y: number, w: number, h: number) {
-  return [
-    { pos: [x, y]           as [number,number], resizeFn: (dx: number, dy: number, p: [number,number][]) => [[p[0]![0]+dx, p[0]![1]+dy] as [number,number], p[1]!] },
-    { pos: [x+w/2, y]       as [number,number], resizeFn: (dx: number, dy: number, p: [number,number][]) => [[p[0]![0], p[0]![1]+dy] as [number,number], p[1]!] },
-    { pos: [x+w, y]         as [number,number], resizeFn: (dx: number, dy: number, p: [number,number][]) => [[p[0]![0], p[0]![1]+dy] as [number,number], [p[1]![0]+dx, p[1]![1]] as [number,number]] },
-    { pos: [x+w, y+h/2]     as [number,number], resizeFn: (dx: number, dy: number, p: [number,number][]) => [p[0]!, [p[1]![0]+dx, p[1]![1]] as [number,number]] },
-    { pos: [x+w, y+h]       as [number,number], resizeFn: (dx: number, dy: number, p: [number,number][]) => [p[0]!, [p[1]![0]+dx, p[1]![1]+dy] as [number,number]] },
-    { pos: [x+w/2, y+h]     as [number,number], resizeFn: (dx: number, dy: number, p: [number,number][]) => [p[0]!, [p[1]![0], p[1]![1]+dy] as [number,number]] },
-    { pos: [x, y+h]         as [number,number], resizeFn: (dx: number, dy: number, p: [number,number][]) => [[p[0]![0]+dx, p[0]![1]] as [number,number], [p[1]![0], p[1]![1]+dy] as [number,number]] },
-    { pos: [x, y+h/2]       as [number,number], resizeFn: (dx: number, dy: number, p: [number,number][]) => [[p[0]![0]+dx, p[0]![1]] as [number,number], p[1]!] },
-  ];
-}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -171,10 +100,15 @@ export function AnnotationCanvas({
   showZoomControls = true,
   showUndoRedo = true,
   enableSelectAll = true,
+  showFullscreen = true,
+  dpi,
+  drawingScale: drawingScaleProp,
+  onDrawingScaleChange,
   className,
   theme: themeProp,
 }: Props) {
   const resolved = resolveTheme(themeProp);
+  const rootRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<StageType>(null);
   const [containerSize, setContainerSize] = useState({ w: 800, h: 600 });
@@ -184,7 +118,7 @@ export function AnnotationCanvas({
   const [labels, setLabels] = useState<LabelMap[]>(labelsProp);
   useEffect(() => { setLabels(labelsProp); }, [labelsProp]);
 
-  const [annotations, dispatch] = useReducer(reducer, initialAnnotations ?? []);
+  const [annotations, dispatch] = useReducer(annotationReducer, initialAnnotations ?? []);
 
   // Undo/redo history (refs — don't need to trigger renders)
   const past = useRef<CanonicalAnnotation[][]>([]);
@@ -209,6 +143,58 @@ export function AnnotationCanvas({
   const [draggingAnnotation, setDraggingAnnotation] = useState<{ id: string; startImg: [number, number] } | null>(null);
   const [draggingHandle, setDraggingHandle] = useState<{ annId: string; handleIdx: number; startImg: [number, number] } | null>(null);
   const [draggingVertex, setDraggingVertex] = useState<{ annId: string; vertIdx: number; startImg: [number, number] } | null>(null);
+
+  // Fullscreen state
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  useEffect(() => {
+    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
+  }, []);
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      // requestFullscreen on the root element; fall back to documentElement for compatibility
+      const target = rootRef.current ?? document.documentElement;
+      target.requestFullscreen({ navigationUI: "hide" }).catch((err: unknown) => {
+        console.error("[annotation-engine] fullscreen request failed:", err);
+      });
+    } else {
+      document.exitFullscreen().catch((err: unknown) => {
+        console.error("[annotation-engine] exit fullscreen failed:", err);
+      });
+    }
+  }, []);
+
+  // Drawing scale — local override wins over prop
+  const [drawingScale, setDrawingScale] = useState<DrawingScale | undefined>(drawingScaleProp);
+  useEffect(() => { setDrawingScale(drawingScaleProp); }, [drawingScaleProp]);
+  const [scaleEditing, setScaleEditing] = useState(false);
+  const [scaleEditValue, setScaleEditValue] = useState("");
+  const [scaleEditUnit, setScaleEditUnit] = useState<DrawingScale["unit"]>("mm");
+
+  // Compute real-world pixels-to-unit conversion: real units per pixel
+  const realUnitsPerPixel: number | null = (() => {
+    if (!dpi || !drawingScale) return null;
+    // Paper unit depends on the chosen unit system:
+    // metric (mm/cm/m): 1 paper inch = 25.4 paper-mm; scale.value real-mm per paper-mm
+    // imperial (in/ft): 1 paper inch = 1 paper-inch; scale.value real-in per paper-inch
+    const isPaperInches = drawingScale.unit === "in" || drawingScale.unit === "ft";
+    const realUnitsPerPaperInch = isPaperInches
+      ? drawingScale.value                       // e.g. 48 real-in per paper-in
+      : drawingScale.value * 25.4;               // e.g. 100 * 25.4 = 2540 real-mm per paper-in
+    return realUnitsPerPaperInch / dpi;
+  })();
+
+  function formatDim(pixels: number): string {
+    if (realUnitsPerPixel === null || !drawingScale) return "";
+    let val = pixels * realUnitsPerPixel;
+    let unit = drawingScale.unit;
+    // Auto-convert to larger units for readability
+    if (unit === "mm" && val >= 1000) { val /= 1000; unit = "m"; }
+    else if (unit === "cm" && val >= 100) { val /= 100; unit = "m"; }
+    else if (unit === "in" && val >= 12) { val /= 12; unit = "ft"; }
+    return `${val.toFixed(val < 10 ? 2 : 1)}${unit}`;
+  }
 
   // Internal clipboard — stores copied annotations for Ctrl+C / Ctrl+V
   const [clipboard, setClipboard] = useState<CanonicalAnnotation[]>([]);
@@ -728,13 +714,32 @@ export function AnnotationCanvas({
 
     const chipLabel = lm?.displayName ?? ann.label;
     const chipConf = ann.confidence !== undefined ? ` ${Math.round(ann.confidence * 100)}%` : "";
-    const chipWidth = (chipLabel.length + chipConf.length) * 6.5 / scale + 12 / scale;
+
+    // Real-world dimensions appended to chip when scale is configured
+    let chipDim = "";
+    if (realUnitsPerPixel !== null) {
+      if (ann.type === "bbox") {
+        const { w, h } = bboxToKonva(ann.points);
+        chipDim = ` ${formatDim(w)}×${formatDim(h)}`;
+      } else if (ann.type === "circle") {
+        const { w } = bboxToKonva(ann.points);
+        chipDim = ` ⌀${formatDim(w)}`;
+      } else if (ann.type === "line") {
+        const dx = ann.points[1]![0] - ann.points[0]![0];
+        const dy = ann.points[1]![1] - ann.points[0]![1];
+        chipDim = ` ${formatDim(Math.hypot(dx, dy))}`;
+      }
+    }
+
+    const chipText = chipLabel + chipConf + chipDim;
+    // 8px per char is a safe overestimate for mixed system-ui + monospace content
+    const chipWidth = chipText.length * 8 / scale + 12 / scale;
 
     const chip = chipVisible ? (
       <Group x={chipX} y={chipY}>
         <Rect width={chipWidth} height={14 / scale} fill="rgba(0,0,0,0.65)" cornerRadius={3 / scale} />
         <Circle x={6 / scale} y={7 / scale} radius={3 / scale} fill={color} />
-        <Text x={12 / scale} y={2 / scale} text={chipLabel + chipConf} fontSize={11 / scale} fill={resolved.textPrimary} fontFamily="system-ui" />
+        <Text x={12 / scale} y={2 / scale} text={chipText} fontSize={11 / scale} fill={resolved.textPrimary} fontFamily="system-ui" />
       </Group>
     ) : null;
 
@@ -808,6 +813,7 @@ export function AnnotationCanvas({
               }}
             />
           ))}
+          {chip}
         </Group>
       );
     }
@@ -883,7 +889,7 @@ export function AnnotationCanvas({
   const cssVars = themeToCssVars(resolved) as React.CSSProperties;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", background: "var(--ae-bg-base)", fontFamily: "system-ui,-apple-system,'Segoe UI',sans-serif", fontSize: 13, color: "var(--ae-text-primary)", overflow: "hidden", ...cssVars }} className={className ?? ""}>
+    <div ref={rootRef} style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", background: "var(--ae-bg-base)", fontFamily: "system-ui,-apple-system,'Segoe UI',sans-serif", fontSize: 13, color: "var(--ae-text-primary)", overflow: "hidden", ...cssVars }} className={className ?? ""}>
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         <Toolbar
           tools={availableTools}
@@ -991,62 +997,113 @@ export function AnnotationCanvas({
           <span>Zoom: <span style={{ fontFamily: "'JetBrains Mono','Fira Code',monospace" }}>{Math.round(scale * 100)}%</span></span>
           {showZoomControls && (
             <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
-              {/* Fit to screen */}
-              <button
-                title="Fit to screen (Ctrl+0)"
-                onClick={fitToScreen}
-                style={zoomBtnStyle}
+              <button title="Fit to screen (Ctrl+0)" onClick={fitToScreen} style={zoomBtnStyle}
                 onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--ae-bg-elevated)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-primary)"; }}
-                onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-secondary)"; }}
-              >
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M1 6V1h5M10 1h5v5M15 10v5h-5M6 15H1v-5"/>
-                </svg>
+                onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-secondary)"; }}>
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M1 6V1h5M10 1h5v5M15 10v5h-5M6 15H1v-5"/></svg>
               </button>
-              {/* Zoom out */}
-              <button
-                title="Zoom out (Ctrl+-)"
-                onClick={() => setScale((s) => Math.max(s / 1.2, MIN_ZOOM))}
-                style={zoomBtnStyle}
+              <button title="Zoom out (Ctrl+-)" onClick={() => setScale((s) => Math.max(s / 1.2, MIN_ZOOM))} style={zoomBtnStyle}
                 onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--ae-bg-elevated)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-primary)"; }}
-                onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-secondary)"; }}
-              >
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <circle cx="7" cy="7" r="5"/><line x1="10.5" y1="10.5" x2="14" y2="14"/><line x1="4.5" y1="7" x2="9.5" y2="7"/>
-                </svg>
+                onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-secondary)"; }}>
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="7" cy="7" r="5"/><line x1="10.5" y1="10.5" x2="14" y2="14"/><line x1="4.5" y1="7" x2="9.5" y2="7"/></svg>
               </button>
-              {/* Zoom in */}
-              <button
-                title="Zoom in (Ctrl+=)"
-                onClick={() => setScale((s) => Math.min(s * 1.2, MAX_ZOOM))}
-                style={zoomBtnStyle}
+              <button title="Zoom in (Ctrl+=)" onClick={() => setScale((s) => Math.min(s * 1.2, MAX_ZOOM))} style={zoomBtnStyle}
                 onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--ae-bg-elevated)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-primary)"; }}
-                onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-secondary)"; }}
-              >
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <circle cx="7" cy="7" r="5"/><line x1="10.5" y1="10.5" x2="14" y2="14"/><line x1="7" y1="4.5" x2="7" y2="9.5"/><line x1="4.5" y1="7" x2="9.5" y2="7"/>
-                </svg>
+                onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-secondary)"; }}>
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="7" cy="7" r="5"/><line x1="10.5" y1="10.5" x2="14" y2="14"/><line x1="7" y1="4.5" x2="7" y2="9.5"/><line x1="4.5" y1="7" x2="9.5" y2="7"/></svg>
               </button>
             </div>
           )}
+
+          {/* Drawing scale display / editor */}
+          {!scaleEditing && (dpi || drawingScale) && (
+            <div style={{ display: "flex", alignItems: "center", gap: 4, borderLeft: "1px solid var(--ae-border)", paddingLeft: 8 }}>
+              <span style={{ color: "var(--ae-text-muted)" }}>Scale:</span>
+              <span style={{ fontFamily: "'JetBrains Mono','Fira Code',monospace" }}>
+                {drawingScale ? drawingScale.label : "—"}
+                {dpi ? ` · ${dpi} DPI` : ""}
+              </span>
+              {!readonly && (
+                <button title="Edit drawing scale" onClick={() => {
+                  setScaleEditValue(drawingScale?.value.toString() ?? "");
+                  setScaleEditUnit(drawingScale?.unit ?? "mm");
+                  setScaleEditing(true);
+                }} style={{ ...zoomBtnStyle, width: 16, height: 16 }}
+                  onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--ae-bg-elevated)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-primary)"; }}
+                  onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-secondary)"; }}>
+                  <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 2a2.12 2.12 0 0 1 3 3L5 14l-4 1 1-4Z"/></svg>
+                </button>
+              )}
+            </div>
+          )}
+          {scaleEditing && (
+            <form style={{ display: "flex", alignItems: "center", gap: 4, borderLeft: "1px solid var(--ae-border)", paddingLeft: 8 }}
+              onSubmit={(e) => {
+                e.preventDefault();
+                const v = parseFloat(scaleEditValue);
+                if (!isNaN(v) && v > 0) {
+                  const isPaperInches = scaleEditUnit === "in" || scaleEditUnit === "ft";
+                  const label = isPaperInches
+                    ? `1"=${v}${scaleEditUnit}`
+                    : `1:${v}`;
+                  const next: DrawingScale = { value: v, unit: scaleEditUnit, label };
+                  setDrawingScale(next);
+                  onDrawingScaleChange?.(next);
+                }
+                setScaleEditing(false);
+              }}>
+              <span style={{ color: "var(--ae-text-muted)", fontSize: 11 }}>1 paper unit =</span>
+              <input
+                autoFocus
+                type="number"
+                min="0.001"
+                step="any"
+                value={scaleEditValue}
+                onChange={(e) => setScaleEditValue(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Escape") setScaleEditing(false); }}
+                style={{ width: 64, height: 18, background: "var(--ae-bg-elevated)", border: "1px solid var(--ae-accent)", borderRadius: 3, color: "var(--ae-text-primary)", fontSize: 11, padding: "0 4px", fontFamily: "'JetBrains Mono','Fira Code',monospace", outline: "none" }}
+              />
+              <select value={scaleEditUnit} onChange={(e) => setScaleEditUnit(e.target.value as DrawingScale["unit"])}
+                style={{ height: 18, background: "var(--ae-bg-elevated)", border: "1px solid var(--ae-border)", borderRadius: 3, color: "var(--ae-text-primary)", fontSize: 11, outline: "none" }}>
+                <option value="mm">mm</option>
+                <option value="cm">cm</option>
+                <option value="m">m</option>
+                <option value="in">in</option>
+                <option value="ft">ft</option>
+              </select>
+              <button type="submit" style={{ ...zoomBtnStyle, width: 18, height: 18, color: "var(--ae-success)" }}
+                onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--ae-bg-elevated)"; }}
+                onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}>
+                <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="2 8 6 12 14 4"/></svg>
+              </button>
+              <button type="button" onClick={() => setScaleEditing(false)} style={{ ...zoomBtnStyle, width: 18, height: 18, color: "var(--ae-danger)" }}
+                onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--ae-bg-elevated)"; }}
+                onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}>
+                <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="2" y1="2" x2="14" y2="14"/><line x1="14" y1="2" x2="2" y2="14"/></svg>
+              </button>
+            </form>
+          )}
         </div>
-        <span style={{ fontFamily: "'JetBrains Mono','Fira Code',monospace" }}>x: {Math.round(cursorImg[0])} y: {Math.round(cursorImg[1])}</span>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontFamily: "'JetBrains Mono','Fira Code',monospace" }}>x: {Math.round(cursorImg[0])} y: {Math.round(cursorImg[1])}</span>
+          {showFullscreen && (
+            <button
+              title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+              onClick={toggleFullscreen}
+              style={zoomBtnStyle}
+              onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--ae-bg-elevated)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-primary)"; }}
+              onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-secondary)"; }}
+            >
+              {isFullscreen
+                ? <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 1v4H1M11 1v4h4M1 11h4v4M11 11h4v4"/></svg>
+                : <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M1 6V1h5M10 1h5v5M15 10v5h-5M6 15H1v-5"/></svg>
+              }
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-const zoomBtnStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: 20,
-  height: 20,
-  background: "transparent",
-  border: "none",
-  borderRadius: 4,
-  cursor: "pointer",
-  color: "var(--ae-text-secondary)",
-  padding: 0,
-  transition: "background 0.1s, color 0.1s",
-};

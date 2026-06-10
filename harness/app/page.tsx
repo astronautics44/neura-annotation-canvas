@@ -5,6 +5,7 @@ import { useState } from "react";
 import type {
   CanonicalAnnotation,
   ThemeVars,
+  DrawingScale,
 } from "@ahmadtanveer44/neura-annotation-canvas";
 import { labelRegistry } from "../fixtures/label-registry";
 import { adaptEngineA } from "../lib/adapters";
@@ -45,6 +46,14 @@ const lightTheme: Partial<ThemeVars> = {
   selection: "rgba(37,99,235,0.12)",
 };
 
+// Preset scales for the demo — covers metric and imperial conventions
+const SCALE_PRESETS: { label: string; scale: DrawingScale; dpi: number }[] = [
+  { label: "None", scale: { value: 1, unit: "mm", label: "—" }, dpi: 0 },
+  { label: "1:100 @ 300 DPI", scale: { value: 100, unit: "mm", label: "1:100" }, dpi: 300 },
+  { label: "1:50 @ 300 DPI",  scale: { value: 50,  unit: "mm", label: "1:50"  }, dpi: 300 },
+  { label: '1/4"=1\' @ 300 DPI', scale: { value: 48, unit: "in", label: '1/4"=1\'' }, dpi: 300 },
+];
+
 type Engine = "A" | "B" | "C" | "D";
 
 function getAnnotations(engine: Engine): CanonicalAnnotation[] {
@@ -63,6 +72,8 @@ function getAnnotations(engine: Engine): CanonicalAnnotation[] {
 export default function Page() {
   const [engine, setEngine] = useState<Engine>("A");
   const [labels, setLabels] = useState(labelRegistry);
+  const [scalePreset, setScalePreset] = useState(0); // index into SCALE_PRESETS
+  const activePreset = SCALE_PRESETS[scalePreset]!;
   const annotations = getAnnotations(engine);
 
   return (
@@ -158,6 +169,20 @@ export default function Page() {
           </button>
         ))}
 
+        {/* Scale preset selector */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, borderLeft: `1px solid ${lightTheme.border}`, paddingLeft: 12 }}>
+          <span style={{ fontSize: 11, color: lightTheme.textSecondary }}>Scale:</span>
+          <select
+            value={scalePreset}
+            onChange={(e) => setScalePreset(Number(e.target.value))}
+            style={{ height: 24, background: lightTheme.bgSurface, border: `1px solid ${lightTheme.border}`, borderRadius: 4, color: lightTheme.textPrimary, fontSize: 11, padding: "0 6px", cursor: "pointer" }}
+          >
+            {SCALE_PRESETS.map((p, i) => (
+              <option key={i} value={i}>{p.label}</option>
+            ))}
+          </select>
+        </div>
+
         {/* Feature hints */}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: 11, color: lightTheme.textMuted }}>
@@ -188,6 +213,9 @@ export default function Page() {
           showZoomControls={true}
           showUndoRedo={true}
           enableSelectAll={true}
+          dpi={activePreset.dpi > 0 ? activePreset.dpi : undefined}
+          drawingScale={activePreset.dpi > 0 ? activePreset.scale : undefined}
+          onDrawingScaleChange={(s) => console.log("[annotation-engine] onDrawingScaleChange", s)}
           onSave={(saved) => {
             console.log("[annotation-engine] onSave", saved);
           }}

@@ -138,7 +138,7 @@ interface AnnotationCanvasProps {
   onLabelsChange?: (labels: LabelMap[]) => void; // fires when user creates a new label
 
   // Tools
-  tools?: ToolType[]; // subset to expose; default: all ["select","bbox","polygon","line","point"]
+  tools?: ToolType[]; // subset to expose; default: all ["select","bbox","polygon","line","point","circle"]
 
   // Behavior
   readonly?: boolean; // disables all editing; view mode only
@@ -147,6 +147,12 @@ interface AnnotationCanvasProps {
   showZoomControls?: boolean; // zoom-in / zoom-out / fit buttons in the status bar
   showUndoRedo?: boolean;     // undo / redo buttons in the toolbar
   enableSelectAll?: boolean;  // Ctrl/Cmd+A selects all annotations
+  showFullscreen?: boolean;   // fullscreen toggle button in the status bar
+
+  // Drawing scale — enables real-world dimension display on annotation chips
+  dpi?: number;                                       // scanner resolution (dots per inch)
+  drawingScale?: DrawingScale;                        // CV-extracted or user-set drawing scale
+  onDrawingScaleChange?: (s: DrawingScale) => void;   // fires when user overrides the scale
 
   // Layout
   className?: string; // applied to the outer container div
@@ -187,9 +193,9 @@ These are the locked contract. **Do not change them inside the package.**
 ```typescript
 // package/src/types/canonical.ts
 
-export type ToolType = "select" | "bbox" | "polygon" | "line" | "point";
+export type ToolType = "select" | "bbox" | "polygon" | "line" | "point" | "circle";
 
-export type AnnotationType = "bbox" | "polygon" | "line" | "point";
+export type AnnotationType = "bbox" | "polygon" | "line" | "point" | "circle";
 
 export interface CanonicalAnnotation {
   id: string; // nanoid, generated on creation
@@ -199,6 +205,8 @@ export interface CanonicalAnnotation {
   //   polygon: [[x,y],[x,y],...] (open — no duplicate last point)
   //   line:    [[x1,y1],[x2,y2]]
   //   point:   [[x,y]]
+  //   circle:  [[x1,y1],[x2,y2]]  bounding box of the circle;
+  //            cx=(x1+x2)/2, cy=(y1+y2)/2, r=(x2-x1)/2
   label: string; // canonicalClassId, e.g. "door"
   confidence?: number; // 0–1. undefined = human-created annotation
   source: "engine" | "human"; // engine = from CV output; human = added/modified by reviewer
@@ -428,6 +436,7 @@ The theme values are injected as CSS custom properties on the root element (`--a
 │  │ P  │     (fills remaining space)          │  list    │  │
 │  │ L  │                                      │          │  │
 │  │ N  │                                      │          │  │
+│  │ C  │                                      │          │  │
 │  │────│                                      │          │  │
 │  │ H  │  [Reset View] overlay when           │          │  │
 │  │────│  image is panned out of sight        │          │  │
@@ -451,6 +460,7 @@ The theme values are injected as CSS custom properties on the root element (`--a
 | Polygon    | `P`          | pentagon  | Click to place vertices; close by clicking first vertex or pressing `Enter` |
 | Line       | `L`          | minus     | Two-click draw; label popover on second click                               |
 | Point      | `N`          | crosshair | Single click; label popover immediately                                     |
+| Circle     | `C`          | circle    | Click sets center, drag sets radius; label popover on release               |
 | Hand (pan) | `H`          | hand      | Toggle pan mode; also `Space`+drag or middle-mouse drag                     |
 
 ### Canvas navigation
@@ -504,6 +514,12 @@ All three toggles default to `true`. Set any to `false` to hide the feature from
   tools={["select"]}
   ...
 />
+
+// Disable circle tool (e.g. if your workflow doesn't need it)
+<AnnotationCanvas
+  tools={["select", "bbox", "polygon", "line", "point"]}
+  ...
+/>
 ```
 
 > **Note:** Disabling `showUndoRedo` hides the toolbar buttons but does **not** disable the `Ctrl+Z` / `Ctrl+Shift+Z` keyboard shortcuts. If you need to disable undo/redo entirely, combine `showUndoRedo={false}` with `readonly={true}`.
@@ -554,9 +570,94 @@ Annotations render differently based on state and source:
 | Hovered          | 2.5px        | 15%        | —       |
 | Selected         | 2px          | 18%        | —       |
 
-Selected annotations show resize handles (bboxes: 8 handles at corners + edge midpoints; polygons: handles at every vertex; lines: handles at endpoints).
+Selected annotations show resize handles (bboxes: 8 handles at corners + edge midpoints; polygons: handles at every vertex; lines: handles at endpoints; circles: 4 cardinal handles — dragging any handle adjusts the radius while keeping the circle perfectly round).
 
 Label chips (color dot + display name + confidence %) are rendered at each annotation. They are hidden when zoom drops below 30%.
+
+---
+
+## Drawing scale
+
+When a drawing scale and scanner DPI are provided, every annotation chip shows real-world dimensions alongside the label. Users can also correct a wrong CV-extracted scale directly in the status bar.
+
+### How it works
+
+A construction drawing is scanned at a known DPI, and the drawing itself is at a known architectural scale (e.g. 1:100). Together these two numbers let the package convert any pixel distance into a real-world measurement:
+
+```
+real dimension = pixels × (scale.value × 25.4) / dpi   (metric)
+real dimension = pixels × scale.value / dpi             (imperial)
+```
+
+### `DrawingScale` type
+
+```typescript
+import type { DrawingScale } from "@ahmadtanveer44/neura-annotation-canvas";
+
+interface DrawingScale {
+  value: number;                            // real units per 1 paper unit
+  unit: "mm" | "cm" | "m" | "in" | "ft";  // real-world unit for display
+  label: string;                            // human-readable string shown in the status bar
+}
+```
+
+### Common scale values
+
+| Drawing convention | `value` | `unit` | `label`      |
+| ------------------ | ------- | ------ | ------------ |
+| 1:100 (metric)     | 100     | `"mm"` | `"1:100"`    |
+| 1:50 (metric)      | 50      | `"mm"` | `"1:50"`     |
+| 1:20 (metric)      | 20      | `"mm"` | `"1:20"`     |
+| 1/4" = 1' (US)     | 48      | `"in"` | `'1/4"=1\''` |
+| 1/8" = 1' (US)     | 96      | `"in"` | `'1/8"=1\''` |
+
+> **Imperial `value`:** "1/4" = 1'" means 0.25 paper inches = 12 real inches → 1 paper inch = 48 real inches → `value: 48`.
+
+### Usage
+
+```tsx
+import type { DrawingScale } from "@ahmadtanveer44/neura-annotation-canvas";
+
+// Scale extracted by your CV engine
+const cvScale: DrawingScale = { value: 100, unit: "mm", label: "1:100" };
+
+<AnnotationCanvas
+  image={drawingUrl}
+  labels={labelRegistry}
+  annotations={canonical}
+  dpi={300}                          // scanner resolution
+  drawingScale={cvScale}             // CV-extracted scale (or last saved value)
+  onDrawingScaleChange={(s) => {
+    // persist the user's correction to your backend
+    saveDrawingScale(drawingId, s);
+  }}
+  onSave={handleSave}
+/>
+```
+
+### What the user sees
+
+- **Annotation chips** show real-world dimensions next to the label:
+  - BBox: `Door  92%  0.90m × 2.10m`
+  - Circle: `Column  ⌀0.60m`
+  - Line: `Wall  4.25m`
+- **Status bar** shows the active scale and DPI: `Scale: 1:100 · 300 DPI`
+- **Edit button (✎)** next to the scale label opens an inline form — user types a new value and picks a unit, then presses Enter. `onDrawingScaleChange` fires with the corrected scale. This is the correction path when the CV engine extracts the wrong scale.
+- In `readonly` mode the edit button is hidden.
+
+### Scale correction flow
+
+```
+CV engine extracts scale → client passes drawingScale prop
+                         ↓
+     User notices dimensions look wrong
+                         ↓
+     User clicks ✎ in status bar → edits value + unit → Enter
+                         ↓
+     onDrawingScaleChange fires → client persists correction
+                         ↓
+     Annotation chips update immediately with corrected dimensions
+```
 
 ---
 
@@ -584,11 +685,12 @@ The package does not do this itself — SSR gating is the consumer's responsibil
 ```typescript
 // package/src/index.ts
 
-export { AnnotationCanvas }; // the main component
+export { AnnotationCanvas };                              // the main component
 export type { CanonicalAnnotation, LabelMap, ToolType }; // canonical types
-export type { ThemeVars }; // theme token interface
-export { DEFAULT_THEME }; // the default dark palette, useful as a base
-export { geo }; // coordinate math helpers for use in adapters
+export type { DrawingScale };                             // drawing scale type (dpi + scale props)
+export type { ThemeVars };                                // theme token interface
+export { DEFAULT_THEME };                                 // the default dark palette, useful as a base
+export { geo };                                           // coordinate math helpers for use in adapters
 ```
 
 **Nothing else is exported.** Internal components (`Toolbar`, `LabelPanel`, etc.), the reducer, and utility functions are private to the package.
