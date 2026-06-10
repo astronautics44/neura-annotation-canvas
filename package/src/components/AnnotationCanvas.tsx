@@ -9,7 +9,7 @@ import React, {
 } from "react";
 import type { KonvaEventObject } from "konva/lib/Node";
 import type { Stage as StageType } from "konva/lib/Stage";
-import { Stage, Layer, Image as KonvaImage, Rect, Line, Circle, Group, Text } from "react-konva";
+import { Stage, Layer, Image as KonvaImage, Rect, Line, Circle, Ellipse, Group, Text } from "react-konva";
 import useImage from "use-image";
 import type { CanonicalAnnotation, LabelMap, ToolType } from "../types/canonical";
 import type { ThemeVars } from "../theme";
@@ -106,7 +106,9 @@ type DrawState =
   | { phase: "polygon-pending"; pts: [number, number][]; pos: [number, number] }
   | { phase: "line-drawing"; start: [number, number]; cur: [number, number] }
   | { phase: "line-pending"; points: [[number, number], [number, number]]; pos: [number, number] }
-  | { phase: "point-pending"; pt: [number, number]; pos: [number, number] };
+  | { phase: "point-pending"; pt: [number, number]; pos: [number, number] }
+  | { phase: "circle-drawing"; center: [number, number]; cur: [number, number] }
+  | { phase: "circle-pending"; points: [[number, number], [number, number]]; pos: [number, number] };
 
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 20;
@@ -378,6 +380,7 @@ export function AnnotationCanvas({
       if (e.key === "p" || e.key === "P") { setPanMode(false); setTool("polygon"); setDraw({ phase: "idle" }); return; }
       if (e.key === "l" || e.key === "L") { setPanMode(false); setTool("line"); setDraw({ phase: "idle" }); return; }
       if (e.key === "n" || e.key === "N") { setPanMode(false); setTool("point"); setDraw({ phase: "idle" }); return; }
+      if (e.key === "c" || e.key === "C") { setPanMode(false); setTool("circle"); setDraw({ phase: "idle" }); return; }
 
       if ((e.key === "Delete" || e.key === "Backspace") && selectedIds.length > 0) {
         if (selectedIds.length === 1) {
@@ -465,6 +468,7 @@ export function AnnotationCanvas({
     }
 
     if (tool === "point") { setDraw({ phase: "point-pending", pt: imgPos, pos: imgPos }); return; }
+    if (tool === "circle") { setDraw({ phase: "circle-drawing", center: imgPos, cur: imgPos }); return; }
   }, [shouldPan, readonly, tool, draw, getImagePos, scale, stagePos]);
 
   const handleStageMouseMove = useCallback((e: KonvaEventObject<MouseEvent>) => {
@@ -485,6 +489,7 @@ export function AnnotationCanvas({
     if (draw.phase === "bbox-drawing") setDraw({ ...draw, cur: imgPos });
     if (draw.phase === "polygon-drawing") setDraw({ ...draw, cur: imgPos });
     if (draw.phase === "line-drawing") setDraw({ ...draw, cur: imgPos });
+    if (draw.phase === "circle-drawing") setDraw({ ...draw, cur: imgPos });
 
     if (draggingAnnotation) {
       const dx = imgPos[0] - draggingAnnotation.startImg[0];
@@ -502,12 +507,19 @@ export function AnnotationCanvas({
     if (draggingHandle) {
       const ann = annotationsRef.current.find((a) => a.id === draggingHandle.annId);
       if (ann) {
-        const dx = imgPos[0] - draggingHandle.startImg[0];
-        const dy = imgPos[1] - draggingHandle.startImg[1];
-        const { x, y, w, h } = bboxToKonva(ann.points);
-        const handle = bboxHandles(x, y, w, h)[draggingHandle.handleIdx];
-        if (handle) {
-          dispatchAndNotify({ type: "UPDATE", payload: { ...ann, points: handle.resizeFn(dx, dy, ann.points as [[number,number],[number,number]]) } });
+        if (ann.type === "circle") {
+          const { x, y, w } = bboxToKonva(ann.points);
+          const cx = x + w / 2, cy = y + w / 2;
+          const r = Math.max(4, Math.hypot(imgPos[0] - cx, imgPos[1] - cy));
+          dispatchAndNotify({ type: "UPDATE", payload: { ...ann, points: [[cx - r, cy - r], [cx + r, cy + r]] } });
+        } else {
+          const dx = imgPos[0] - draggingHandle.startImg[0];
+          const dy = imgPos[1] - draggingHandle.startImg[1];
+          const { x, y, w, h } = bboxToKonva(ann.points);
+          const handle = bboxHandles(x, y, w, h)[draggingHandle.handleIdx];
+          if (handle) {
+            dispatchAndNotify({ type: "UPDATE", payload: { ...ann, points: handle.resizeFn(dx, dy, ann.points as [[number,number],[number,number]]) } });
+          }
         }
         setDraggingHandle({ ...draggingHandle, startImg: imgPos });
       }
@@ -534,6 +546,12 @@ export function AnnotationCanvas({
       const { w, h } = bboxToKonva([draw.start, imgPos]);
       if (w < 8 || h < 8) { setDraw({ phase: "idle" }); return; }
       setDraw({ phase: "bbox-pending", points: [draw.start, imgPos], pos: imgPos });
+    }
+    if (draw.phase === "circle-drawing") {
+      const r = Math.hypot(imgPos[0] - draw.center[0], imgPos[1] - draw.center[1]);
+      if (r < 4) { setDraw({ phase: "idle" }); return; }
+      const [cx, cy] = draw.center;
+      setDraw({ phase: "circle-pending", points: [[cx - r, cy - r], [cx + r, cy + r]], pos: imgPos });
     }
     setDraggingAnnotation(null);
     setDraggingHandle(null);
@@ -594,6 +612,8 @@ export function AnnotationCanvas({
       dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "line", points: draw.points, label, source: "human" } });
     } else if (draw.phase === "point-pending") {
       dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "point", points: [draw.pt], label, source: "human" } });
+    } else if (draw.phase === "circle-pending") {
+      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "circle", points: draw.points, label, source: "human" } });
     }
     setDraw({ phase: "idle" });
   }, [draw, dispatchAndNotify]);
@@ -617,7 +637,7 @@ export function AnnotationCanvas({
   }, [labels, onLabelsChange]);
 
   const popoverPos = (): { x: number; y: number } | null => {
-    if (!["bbox-pending","polygon-pending","line-pending","point-pending"].includes(draw.phase)) return null;
+    if (!["bbox-pending","polygon-pending","line-pending","point-pending","circle-pending"].includes(draw.phase)) return null;
     const pos = (draw as { pos: [number,number] }).pos;
     return { x: pos[0] * scale + stagePos.x, y: pos[1] * scale + stagePos.y };
   };
@@ -630,7 +650,7 @@ export function AnnotationCanvas({
     const ann = annotations.find((a) => a.id === relabelId);
     if (!ann) return null;
     let imgX: number, imgY: number;
-    if (ann.type === "bbox") {
+    if (ann.type === "bbox" || ann.type === "circle") {
       imgX = Math.min(ann.points[0]![0], ann.points[1]![0]);
       imgY = Math.min(ann.points[0]![1], ann.points[1]![1]);
     } else if (ann.type === "point") {
@@ -695,7 +715,7 @@ export function AnnotationCanvas({
 
     const chipVisible = scale >= 0.3;
     let chipX = 0, chipY = 0;
-    if (ann.type === "bbox") {
+    if (ann.type === "bbox" || ann.type === "circle") {
       chipX = Math.min(ann.points[0]![0], ann.points[1]![0]);
       chipY = Math.min(ann.points[0]![1], ann.points[1]![1]) - 16 / scale;
     } else if (ann.type === "polygon" || ann.type === "line") {
@@ -725,6 +745,28 @@ export function AnnotationCanvas({
           <Rect x={x} y={y} width={w} height={h} fill={hexToRgba(color, fillAlpha)} {...commonProps} />
           {showHandles && bboxHandles(x, y, w, h).map((handle, i) => (
             <Circle key={i} x={handle.pos[0]} y={handle.pos[1]}
+              radius={HANDLE_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={2 / scale}
+              onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
+                e.cancelBubble = true;
+                setDraggingHandle({ annId: ann.id, handleIdx: i, startImg: getImagePos(e) });
+              }}
+            />
+          ))}
+          {chip}
+        </Group>
+      );
+    }
+
+    if (ann.type === "circle") {
+      const { x, y, w } = bboxToKonva(ann.points);
+      const cx = x + w / 2, cy = y + w / 2, r = w / 2;
+      return (
+        <Group key={ann.id}>
+          <Ellipse x={cx} y={cy} radiusX={r} radiusY={r} fill={hexToRgba(color, fillAlpha)} {...commonProps} />
+          {showHandles && ([
+            [cx, cy - r], [cx + r, cy], [cx, cy + r], [cx - r, cy],
+          ] as [number, number][]).map(([hx, hy], i) => (
+            <Circle key={i} x={hx} y={hy}
               radius={HANDLE_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={2 / scale}
               onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
                 e.cancelBubble = true;
@@ -818,6 +860,17 @@ export function AnnotationCanvas({
       return <Line points={[draw.start[0], draw.start[1], draw.cur[0], draw.cur[1]]} stroke={resolved.accent} strokeWidth={1.5 / scale} dash={[4 / scale, 4 / scale]} />;
     }
 
+    if (draw.phase === "circle-drawing") {
+      const r = Math.hypot(draw.cur[0] - draw.center[0], draw.cur[1] - draw.center[1]);
+      return (
+        <Group>
+          <Ellipse x={draw.center[0]} y={draw.center[1]} radiusX={r} radiusY={r}
+            stroke={resolved.accent} strokeWidth={1.5 / scale} fill={hexToRgba(resolved.accent, 0.1)} dash={[4 / scale, 4 / scale]} />
+          <Circle x={draw.center[0]} y={draw.center[1]} radius={3 / scale} fill={resolved.accent} />
+        </Group>
+      );
+    }
+
     return null;
   };
 
@@ -825,7 +878,7 @@ export function AnnotationCanvas({
   // Layout
   // ---------------------------------------------------------------------------
 
-  const availableTools = tools ?? (["select", "bbox", "polygon", "line", "point"] as ToolType[]);
+  const availableTools = tools ?? (["select", "bbox", "polygon", "line", "point", "circle"] as ToolType[]);
 
   const cssVars = themeToCssVars(resolved) as React.CSSProperties;
 

@@ -1,6 +1,6 @@
-export type ToolType = "select" | "bbox" | "polygon" | "line" | "point";
+export type ToolType = "select" | "bbox" | "polygon" | "line" | "point" | "circle";
 
-export type AnnotationType = "bbox" | "polygon" | "line" | "point";
+export type AnnotationType = "bbox" | "polygon" | "line" | "point" | "circle";
 
 export interface CanonicalAnnotation {
   id: string;
