@@ -690,6 +690,7 @@ export function AnnotationCanvas({
           selectedId={selectedId}
           onCreateLabel={readonly ? undefined : handleCreateLabel}
           width={resolved.panelWidth}
+          height={containerSize.h}
           onSelect={(id) => {
             setSelectedId(id);
             const ann = annotations.find((a) => a.id === id);

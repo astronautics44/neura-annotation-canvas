@@ -13,6 +13,7 @@ interface Props {
   onRelabel: (id: string, label: string) => void;
   onCreateLabel?: ((displayName: string) => string) | undefined;
   width?: number;
+  height?: number;
 }
 
 export function LabelPanel({
@@ -24,6 +25,7 @@ export function LabelPanel({
   onRelabel,
   onCreateLabel,
   width = 220,
+  height,
 }: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
@@ -80,8 +82,13 @@ export function LabelPanel({
         display: "flex",
         flexDirection: "column",
         flexShrink: 0,
-        /* Critical: constrain height to parent so the inner list can scroll */
-        height: "100%",
+        /*
+         * Use the explicit pixel height supplied by AnnotationCanvas (measured
+         * via ResizeObserver) so scrolling works even when the client wraps us
+         * in a container with no explicit height (e.g. w-3/5 with no h-*).
+         * Fall back to 100% for the harness where the flex chain is complete.
+         */
+        height: height !== undefined ? height : "100%",
         minHeight: 0,
         overflow: "hidden",
         position: "relative",
