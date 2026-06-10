@@ -24,7 +24,7 @@ const AnnotationCanvas = dynamic(
   { ssr: false },
 );
 
-const FLOOR_PLAN_URL = "/floorplan.svg";
+const FLOOR_PLAN_URL = "/construction_drawing.png";
 
 // Ccript Agency design system — deep charcoal + warm orange
 const ccriptTheme: Partial<ThemeVars> = {
