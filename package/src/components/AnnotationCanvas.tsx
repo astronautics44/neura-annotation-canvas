@@ -211,6 +211,9 @@ export function AnnotationCanvas({
   // Internal clipboard — stores copied annotations for Ctrl+C / Ctrl+V
   const [clipboard, setClipboard] = useState<CanonicalAnnotation[]>([]);
 
+  // Which annotation is being relabeled (double-click or R key)
+  const [relabelId, setRelabelId] = useState<string | null>(null);
+
   // Snapshot current state before a mutating action (for undo)
   const snapshot = useCallback(() => {
     past.current = [...past.current, [...annotationsRef.current]];
@@ -369,7 +372,7 @@ export function AnnotationCanvas({
       if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); onSave(annotationsRef.current); return; }
 
       if (e.key === "h" || e.key === "H") { setPanMode((p) => !p); setDraw({ phase: "idle" }); return; }
-      if (e.key === "Escape") { setPanMode(false); setTool("select"); setDraw({ phase: "idle" }); return; }
+      if (e.key === "Escape") { setPanMode(false); setTool("select"); setDraw({ phase: "idle" }); setRelabelId(null); return; }
       if (e.key === "v" || e.key === "V") { setPanMode(false); setTool("select"); setDraw({ phase: "idle" }); return; }
       if (e.key === "b" || e.key === "B") { setPanMode(false); setTool("bbox"); setDraw({ phase: "idle" }); return; }
       if (e.key === "p" || e.key === "P") { setPanMode(false); setTool("polygon"); setDraw({ phase: "idle" }); return; }
@@ -386,6 +389,13 @@ export function AnnotationCanvas({
         return;
       }
 
+      // Relabel: R key when one annotation is selected and not mid-draw
+      if ((e.key === "r" || e.key === "R") && !e.metaKey && !e.ctrlKey && selectedIds.length === 1 && draw.phase === "idle" && !readonly) {
+        e.preventDefault();
+        setRelabelId(selectedIds[0]!);
+        return;
+      }
+
       if (e.key === "Enter" && draw.phase === "polygon-drawing" && draw.pts.length >= 3) {
         const pos = draw.pts[draw.pts.length - 1] ?? [0, 0];
         setDraw({ phase: "polygon-pending", pts: draw.pts, pos: pos as [number, number] });
@@ -398,7 +408,7 @@ export function AnnotationCanvas({
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp); };
-  }, [draw, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot]);
+  }, [draw, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelId]);
 
   // ---------------------------------------------------------------------------
   // Stage event handlers
@@ -614,6 +624,25 @@ export function AnnotationCanvas({
 
   const pPos = popoverPos();
 
+  // Screen position for the relabel popover — top-left corner of the annotation
+  const relabelPos = (() => {
+    if (!relabelId) return null;
+    const ann = annotations.find((a) => a.id === relabelId);
+    if (!ann) return null;
+    let imgX: number, imgY: number;
+    if (ann.type === "bbox") {
+      imgX = Math.min(ann.points[0]![0], ann.points[1]![0]);
+      imgY = Math.min(ann.points[0]![1], ann.points[1]![1]);
+    } else if (ann.type === "point") {
+      imgX = ann.points[0]![0];
+      imgY = ann.points[0]![1];
+    } else {
+      const c = centroid(ann.points);
+      imgX = c[0]; imgY = c[1];
+    }
+    return { x: imgX * scale + stagePos.x, y: imgY * scale + stagePos.y };
+  })();
+
   // Detect when the image is scrolled/panned entirely out of view
   const imageOutOfView = img != null && (
     stagePos.x + img.width * scale < 0 ||
@@ -646,12 +675,20 @@ export function AnnotationCanvas({
     const opacity = isEngine ? 0.85 : 1.0;
     const fillAlpha = isSelected ? 0.18 : isHovered ? 0.15 : isEngine ? 0.08 : 0.12;
 
+    const handleDblClick = (e: KonvaEventObject<MouseEvent>) => {
+      if (tool !== "select" || readonly) return;
+      e.cancelBubble = true;
+      setSelectedIds([ann.id]);
+      setRelabelId(ann.id);
+    };
+
     const commonProps = {
       stroke: color,
       strokeWidth: strokeWidth / scale,
       opacity,
       onClick: (e: KonvaEventObject<MouseEvent>) => handleAnnotationClick(ann.id, e),
       onMouseDown: (e: KonvaEventObject<MouseEvent>) => handleAnnotationMouseDown(ann.id, e),
+      onDblClick: handleDblClick,
       onMouseEnter: () => setHoveredId(ann.id),
       onMouseLeave: () => setHoveredId(null),
     };
@@ -740,6 +777,7 @@ export function AnnotationCanvas({
           <Circle x={x} y={y} radius={8 / scale} fill={color} stroke={resolved.handleFill} strokeWidth={2 / scale} opacity={opacity}
             onClick={(e: KonvaEventObject<MouseEvent>) => handleAnnotationClick(ann.id, e)}
             onMouseDown={(e: KonvaEventObject<MouseEvent>) => handleAnnotationMouseDown(ann.id, e)}
+            onDblClick={handleDblClick}
             onMouseEnter={() => setHoveredId(ann.id)}
             onMouseLeave={() => setHoveredId(null)}
           />
@@ -848,6 +886,19 @@ export function AnnotationCanvas({
               position={pPos}
               onSelect={handleLabelSelect}
               onCancel={handlePopoverCancel}
+              onCreateLabel={readonly ? undefined : handleCreateLabel}
+            />
+          )}
+          {relabelPos && !pPos && (
+            <LabelPopover
+              labels={labels}
+              position={relabelPos}
+              onSelect={(label) => {
+                const ann = annotations.find((a) => a.id === relabelId);
+                if (ann) dispatchAndNotify({ type: "UPDATE", payload: { ...ann, label } });
+                setRelabelId(null);
+              }}
+              onCancel={() => setRelabelId(null)}
               onCreateLabel={readonly ? undefined : handleCreateLabel}
             />
           )}
