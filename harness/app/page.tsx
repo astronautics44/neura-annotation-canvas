@@ -6,7 +6,7 @@ import type {
   CanonicalAnnotation,
   ThemeVars,
   DrawingScale,
-} from "@ahmadtanveer44/neura-annotation-canvas";
+} from "@astronautics44/neura-annotation-canvas";
 import { labelRegistry } from "../fixtures/label-registry";
 import { adaptEngineA } from "../lib/adapters";
 import { adaptEngineB } from "../lib/adapters";
@@ -19,7 +19,7 @@ import engineD from "../fixtures/engine-d.json";
 
 const AnnotationCanvas = dynamic(
   () =>
-    import("@ahmadtanveer44/neura-annotation-canvas").then(
+    import("@astronautics44/neura-annotation-canvas").then(
       (m) => m.AnnotationCanvas,
     ),
   { ssr: false },

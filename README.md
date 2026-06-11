@@ -1,4 +1,4 @@
-# @ahmadtanveer44/neura-annotation-canvas
+# @astronautics44/neura-annotation-canvas
 
 A professional-grade React annotation component for reviewing and correcting CV engine output on construction drawings. Built for the same use-case class as CVAT and Roboflow — canvas-first, keyboard-driven, designed for engineers doing quantity takeoffs.
 
@@ -22,7 +22,7 @@ A CV engine processes a drawing and outputs bounding boxes, polygons, or points.
 
 ```
 annotation-engine/
-├── package/          ← the publishable library (@ahmadtanveer44/neura-annotation-canvas)
+├── package/          ← the publishable library (@astronautics44/neura-annotation-canvas)
 │   └── src/
 │       ├── index.ts                   public exports only
 │       ├── types/canonical.ts         locked canonical types
@@ -52,18 +52,51 @@ npm run build:pkg   # builds the package only
 
 ## Publishing to GitHub Packages
 
-This repository is set up to publish `@ahmadtanveer44/neura-annotation-canvas` to GitHub Packages as a public package when a GitHub Release is published.
+This repository publishes `@astronautics44/neura-annotation-canvas` to **GitHub Packages** as a **private** (`restricted`) package. Publishing runs automatically when a GitHub Release is published, or manually via **Actions → Publish Package → Run workflow**.
 
-Consumers should point the package scope at GitHub Packages in their own `.npmrc`:
+### One-time org setup
+
+1. **Package scope must match the GitHub owner** of this repo. If the repo lives under `github.com/MyOrg/...`, rename the package to `@MyOrg/neura-annotation-canvas` everywhere (scope in `package.json`, `.npmrc`, workflow, and consumer apps).
+2. In the org: **Settings → Packages** — ensure members can publish/read packages.
+3. In the repo: **Settings → Actions → General** — allow workflows to write packages (the workflow uses `GITHUB_TOKEN` with `packages: write`).
+
+### Publish a new version
+
+1. Bump `version` in `package/package.json` (e.g. `0.1.4` → `0.1.5`).
+2. Commit and push.
+3. Create a GitHub Release tagged with that version (e.g. `v0.1.5`), or run the workflow manually from the Actions tab.
+
+### Install in another private repo (consumer)
+
+Each developer/CI job needs a token with `read:packages` (and `repo` if the package repo is private).
 
 ```ini
-@ahmadtanveer44:registry=https://npm.pkg.github.com
+# consumer-app/.npmrc  (do not commit the token — use env var in CI)
+@astronautics44:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
 ```
 
-Then install it normally:
+```bash
+npm install @astronautics44/neura-annotation-canvas
+```
+
+For local dev, create a [Personal Access Token](https://github.com/settings/tokens) with `read:packages` and export it:
 
 ```bash
-npm install @ahmadtanveer44/neura-annotation-canvas
+export NODE_AUTH_TOKEN=ghp_...
+npm install
+```
+
+In GitHub Actions (consumer repo):
+
+```yaml
+- uses: actions/setup-node@v4
+  with:
+    registry-url: https://npm.pkg.github.com
+    scope: "@astronautics44"
+- run: npm ci
+  env:
+    NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 ---
@@ -74,7 +107,7 @@ The package is not yet published to npm. Add it as a workspace dependency or pat
 
 ```bash
 # As a local path dep in your package.json:
-"@ahmadtanveer44/neura-annotation-canvas": "file:../annotation-engine/package"
+"@astronautics44/neura-annotation-canvas": "file:../annotation-engine/package"
 ```
 
 Required peer deps:
@@ -92,14 +125,14 @@ The package bundles Konva, react-konva, and use-image — you do not install tho
 ```tsx
 // app/review/page.tsx
 import dynamic from "next/dynamic";
-import type { LabelMap } from "@ahmadtanveer44/neura-annotation-canvas";
+import type { LabelMap } from "@astronautics44/neura-annotation-canvas";
 import { adaptEngineOutput } from "@/lib/annotation.adapter"; // YOUR adapter
 import { labelRegistry } from "@/lib/annotation.labels"; // YOUR label config
 
 // Always load via dynamic — Konva touches `window` at import time
 const AnnotationCanvas = dynamic(
   () =>
-    import("@ahmadtanveer44/neura-annotation-canvas").then(
+    import("@astronautics44/neura-annotation-canvas").then(
       (m) => m.AnnotationCanvas,
     ),
   { ssr: false },
@@ -236,8 +269,8 @@ The package only exports `geo` — pure coordinate math functions that know noth
 ```typescript
 // client-webapp/lib/annotation.adapter.ts
 
-import { geo } from "@ahmadtanveer44/neura-annotation-canvas";
-import type { CanonicalAnnotation } from "@ahmadtanveer44/neura-annotation-canvas";
+import { geo } from "@astronautics44/neura-annotation-canvas";
+import type { CanonicalAnnotation } from "@astronautics44/neura-annotation-canvas";
 
 // Step 1: type your engine's output exactly as it arrives
 type EngineApiResponse = {
@@ -301,7 +334,7 @@ Copy and adapt those patterns — don't import from `harness/`.
 Exported from the package for use in your adapters. All functions are pure, schema-free math.
 
 ```typescript
-import { geo } from "@ahmadtanveer44/neura-annotation-canvas";
+import { geo } from "@astronautics44/neura-annotation-canvas";
 
 // 4-point quad bbox (clockwise from top-left) → [[x1,y1],[x2,y2]]
 geo.quadToPoints(quad: [number, number][]): [[number, number], [number, number]]
@@ -329,8 +362,8 @@ The component ships with a dark professional theme and exposes every design toke
 ### ThemeVars reference
 
 ```typescript
-import type { ThemeVars } from "@ahmadtanveer44/neura-annotation-canvas";
-import { DEFAULT_THEME } from "@ahmadtanveer44/neura-annotation-canvas";
+import type { ThemeVars } from "@astronautics44/neura-annotation-canvas";
+import { DEFAULT_THEME } from "@astronautics44/neura-annotation-canvas";
 
 interface ThemeVars {
   // Backgrounds
@@ -368,7 +401,7 @@ interface ThemeVars {
 Pass any subset of `ThemeVars` — unset keys fall back to defaults:
 
 ```tsx
-import type { ThemeVars } from "@ahmadtanveer44/neura-annotation-canvas";
+import type { ThemeVars } from "@astronautics44/neura-annotation-canvas";
 
 const myTheme: Partial<ThemeVars> = {
   bgBase:    "#0C0C0C",
@@ -592,7 +625,7 @@ real dimension = pixels × scale.value / dpi             (imperial)
 ### `DrawingScale` type
 
 ```typescript
-import type { DrawingScale } from "@ahmadtanveer44/neura-annotation-canvas";
+import type { DrawingScale } from "@astronautics44/neura-annotation-canvas";
 
 interface DrawingScale {
   value: number;                            // real units per 1 paper unit
@@ -616,7 +649,7 @@ interface DrawingScale {
 ### Usage
 
 ```tsx
-import type { DrawingScale } from "@ahmadtanveer44/neura-annotation-canvas";
+import type { DrawingScale } from "@astronautics44/neura-annotation-canvas";
 
 // Scale extracted by your CV engine
 const cvScale: DrawingScale = { value: 100, unit: "mm", label: "1:100" };
@@ -669,7 +702,7 @@ Konva touches `window` at import time. **Always load `AnnotationCanvas` with `dy
 // Correct — the only way to use this in Next.js
 const AnnotationCanvas = dynamic(
   () =>
-    import("@ahmadtanveer44/neura-annotation-canvas").then(
+    import("@astronautics44/neura-annotation-canvas").then(
       (m) => m.AnnotationCanvas,
     ),
   { ssr: false },
@@ -701,7 +734,7 @@ export { geo };                                           // coordinate math hel
 
 These are constraints, not suggestions.
 
-1. **Never import from `@ahmadtanveer44/neura-annotation-canvas` inside an adapter.** Your adapter imports `geo` and types, that's it. Schema field names (`matched_code`, `category_id`, etc.) never appear inside the package — only in your webapp.
+1. **Never import from `@astronautics44/neura-annotation-canvas` inside an adapter.** Your adapter imports `geo` and types, that's it. Schema field names (`matched_code`, `category_id`, etc.) never appear inside the package — only in your webapp.
 
 2. **Always use `dynamic` + `ssr: false`** when importing `AnnotationCanvas` in Next.js. Skipping this breaks server rendering.
 
@@ -717,7 +750,7 @@ These are constraints, not suggestions.
 
 ```typescript
 // client-webapp/lib/annotation.labels.ts
-import type { LabelMap } from "@ahmadtanveer44/neura-annotation-canvas";
+import type { LabelMap } from "@astronautics44/neura-annotation-canvas";
 
 export const labelRegistry: LabelMap[] = [
   {
@@ -773,13 +806,13 @@ import type {
   CanonicalAnnotation,
   LabelMap,
   ThemeVars,
-} from "@ahmadtanveer44/neura-annotation-canvas";
+} from "@astronautics44/neura-annotation-canvas";
 import { adaptEngineOutput } from "@/lib/annotation.adapter";
 import { labelRegistry as initialRegistry } from "@/lib/annotation.labels";
 
 const AnnotationCanvas = dynamic(
   () =>
-    import("@ahmadtanveer44/neura-annotation-canvas").then(
+    import("@astronautics44/neura-annotation-canvas").then(
       (m) => m.AnnotationCanvas,
     ),
   { ssr: false },
