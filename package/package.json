@@ -31,9 +31,10 @@
   },
   "dependencies": {
     "konva": "^9.3.6",
+    "nanoid": "^5.0.7",
+    "polygon-clipping": "^0.15.7",
     "react-konva": "19.0.10",
-    "use-image": "^1.1.1",
-    "nanoid": "^5.0.7"
+    "use-image": "^1.1.1"
   },
   "peerDependencies": {
     "react": ">=18",

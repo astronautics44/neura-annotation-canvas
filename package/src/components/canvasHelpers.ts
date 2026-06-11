@@ -12,6 +12,34 @@ export function bboxToKonva(pts: [number, number][]): { x: number; y: number; w:
   return { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) };
 }
 
+/** Axis-aligned bounds of any annotation in image pixel space. */
+export function getAnnotationBounds(ann: CanonicalAnnotation): { x: number; y: number; w: number; h: number } {
+  if (ann.type === "point") {
+    const [x, y] = ann.points[0]!;
+    const r = 8;
+    return { x: x - r, y: y - r, w: r * 2, h: r * 2 };
+  }
+  if (ann.type === "line" && ann.points.length >= 2) {
+    return bboxToKonva([ann.points[0]!, ann.points[1]!]);
+  }
+  if (ann.type === "bbox" || ann.type === "circle") {
+    return bboxToKonva(ann.points);
+  }
+  if (ann.points.length === 0) return { x: 0, y: 0, w: 0, h: 0 };
+  const xs = ann.points.map((p) => p[0]);
+  const ys = ann.points.map((p) => p[1]);
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
+}
+
+export function boxesIntersect(
+  a: { x: number; y: number; w: number; h: number },
+  b: { x: number; y: number; w: number; h: number },
+): boolean {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
 export function screenToImage(sx: number, sy: number, stageX: number, stageY: number, scale: number): [number, number] {
   return [(sx - stageX) / scale, (sy - stageY) / scale];
 }
@@ -57,5 +85,24 @@ export function annotationReducer(state: CanonicalAnnotation[], action: import("
         ...a,
         points: a.points.map(([x, y]) => [x + action.delta[0], y + action.delta[1]] as [number, number]),
       });
+    case "REPLACE_MANY": {
+      const remaining = state.filter((a) => !action.removeIds.includes(a.id));
+      return [...remaining, ...action.add];
+    }
+    case "REORDER": {
+      const idx = state.findIndex((a) => a.id === action.id);
+      if (idx === -1) return state;
+      const next = [...state];
+      if (action.direction === "forward" && idx < next.length - 1) {
+        const tmp = next[idx]!;
+        next[idx] = next[idx + 1]!;
+        next[idx + 1] = tmp;
+      } else if (action.direction === "backward" && idx > 0) {
+        const tmp = next[idx]!;
+        next[idx] = next[idx - 1]!;
+        next[idx - 1] = tmp;
+      }
+      return next;
+    }
   }
 }

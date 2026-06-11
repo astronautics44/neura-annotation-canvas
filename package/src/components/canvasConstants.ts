@@ -46,4 +46,6 @@ export type Action =
   | { type: "DELETE"; id: string }
   | { type: "DELETE_MANY"; ids: string[] }
   | { type: "MOVE"; id: string; delta: [number, number] }
-  | { type: "MOVE_MANY"; ids: string[]; delta: [number, number] };
+  | { type: "MOVE_MANY"; ids: string[]; delta: [number, number] }
+  | { type: "REPLACE_MANY"; removeIds: string[]; add: import("../types/canonical").CanonicalAnnotation[] }
+  | { type: "REORDER"; id: string; direction: "forward" | "backward" };
