@@ -222,7 +222,12 @@ export function AnnotationCanvas({
   }, [annotations]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (initialAnnotations) {
+    // Skip reloading when the incoming prop is the very array this component
+    // last emitted through onChange. Controlled consumers feed onChange output
+    // back into the `annotations` prop (the documented pattern); without this
+    // guard that echo re-dispatches LOAD, which mutates internal state, which
+    // re-fires onChange — an infinite update loop.
+    if (initialAnnotations && initialAnnotations !== annotationsRef.current) {
       past.current = [];
       future.current = [];
       setCanUndo(false);
