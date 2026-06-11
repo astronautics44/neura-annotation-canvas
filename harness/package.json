@@ -6,7 +6,7 @@
     "build": "next build"
   },
   "dependencies": {
-    "@ahmadtanveer44/neura-annotation-canvas": "*",
+    "@astronautics44/neura-annotation-canvas": "*",
     "next": "^16.2.7",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

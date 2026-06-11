@@ -1,6 +1,6 @@
 {
-  "name": "@ahmadtanveer44/neura-annotation-canvas",
-  "version": "0.1.4",
+  "name": "@astronautics44/neura-annotation-canvas",
+  "version": "0.1.5",
   "private": false,
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -21,9 +21,13 @@
     "build": "tsc -p tsconfig.json",
     "prepublishOnly": "npm run build"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/astronautics44/neura-annotation-canvas.git"
+  },
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
-    "access": "public"
+    "access": "restricted"
   },
   "dependencies": {
     "konva": "^9.3.6",

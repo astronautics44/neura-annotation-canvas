@@ -10,6 +10,9 @@ harness/out/
 # production build
 package/dist/
 
+# local npm auth (use .npmrc.example as template)
+.npmrc.local
+
 # env
 .env
 .env.local
