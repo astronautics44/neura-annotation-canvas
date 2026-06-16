@@ -9,7 +9,7 @@ import React, {
 } from "react";
 import type { KonvaEventObject } from "konva/lib/Node";
 import type { Stage as StageType } from "konva/lib/Stage";
-import { Stage, Layer, Image as KonvaImage, Rect, Line, Circle, Ellipse, Group, Text } from "react-konva";
+import { Stage, Layer, Image as KonvaImage, Rect, Line, Circle, Ellipse, Group, Text, Shape } from "react-konva";
 import useImage from "use-image";
 import type { CanonicalAnnotation, LabelMap, ToolType } from "../types/canonical";
 import type { ThemeVars } from "../theme";
@@ -18,6 +18,17 @@ import { newId } from "../utils/ids";
 import { Toolbar } from "./Toolbar";
 import { LabelPanel } from "./LabelPanel";
 import { LabelPopover } from "./LabelPopover";
+import { ShapeOpsBar } from "./ShapeOpsBar";
+import {
+  getAnnotationRings,
+  hollowAnnotations,
+  intersectAnnotations,
+  isAreaAnnotation,
+  mergeAnnotations,
+  subtractAnnotations,
+  toggleHollow,
+  type ShapeMeta,
+} from "../utils/booleanOps";
 import {
   MIN_ZOOM, MAX_ZOOM, HANDLE_RADIUS, VERTEX_RADIUS, CLOSE_DIST,
   AUTO_COLORS, zoomBtnStyle,
@@ -25,7 +36,7 @@ import {
 } from "./canvasConstants";
 import {
   hexToRgba, bboxToKonva, screenToImage, centroid,
-  bboxHandles, slugify, annotationReducer,
+  bboxHandles, slugify, annotationReducer, getAnnotationBounds, boxesIntersect,
 } from "./canvasHelpers";
 
 // ---------------------------------------------------------------------------
@@ -143,6 +154,8 @@ export function AnnotationCanvas({
   const [draggingAnnotation, setDraggingAnnotation] = useState<{ id: string; startImg: [number, number] } | null>(null);
   const [draggingHandle, setDraggingHandle] = useState<{ annId: string; handleIdx: number; startImg: [number, number] } | null>(null);
   const [draggingVertex, setDraggingVertex] = useState<{ annId: string; vertIdx: number; startImg: [number, number] } | null>(null);
+  /** Drag-box multi-select while the select tool is active. */
+  const [marquee, setMarquee] = useState<{ start: [number, number]; cur: [number, number]; additive: boolean } | null>(null);
 
   // Fullscreen state
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -292,6 +305,62 @@ export function AnnotationCanvas({
       })),
   []);
 
+  const selectedAreaAnnotations = useCallback((): CanonicalAnnotation[] => {
+    return selectedIds
+      .map((id) => annotationsRef.current.find((a) => a.id === id))
+      .filter((a): a is CanonicalAnnotation => a != null && isAreaAnnotation(a));
+  }, [selectedIds]);
+
+  const applyShapeReplace = useCallback((results: CanonicalAnnotation[]) => {
+    if (results.length === 0) return;
+    dispatchAndNotify({
+      type: "REPLACE_MANY",
+      removeIds: selectedIds,
+      add: results,
+    });
+    setSelectedIds(results.map((r) => r.id));
+  }, [selectedIds, dispatchAndNotify]);
+
+  const handleMerge = useCallback(() => {
+    const results = mergeAnnotations(selectedAreaAnnotations(), newId);
+    applyShapeReplace(results);
+  }, [selectedAreaAnnotations, applyShapeReplace]);
+
+  const handleSubtract = useCallback(() => {
+    const results = subtractAnnotations(selectedAreaAnnotations(), newId);
+    applyShapeReplace(results);
+  }, [selectedAreaAnnotations, applyShapeReplace]);
+
+  const handleIntersect = useCallback(() => {
+    const results = intersectAnnotations(selectedAreaAnnotations(), newId);
+    applyShapeReplace(results);
+  }, [selectedAreaAnnotations, applyShapeReplace]);
+
+  const handleCutHole = useCallback(() => {
+    const results = hollowAnnotations(selectedAreaAnnotations(), newId);
+    applyShapeReplace(results);
+  }, [selectedAreaAnnotations, applyShapeReplace]);
+
+  const handleToggleFill = useCallback(() => {
+    const id = selectedIds[0];
+    if (!id) return;
+    const ann = annotationsRef.current.find((a) => a.id === id);
+    if (!ann || !isAreaAnnotation(ann)) return;
+    dispatchAndNotify({ type: "UPDATE", payload: toggleHollow(ann) });
+  }, [selectedIds, dispatchAndNotify]);
+
+  const handleBringForward = useCallback(() => {
+    const id = selectedIds[0];
+    if (!id) return;
+    dispatchAndNotify({ type: "REORDER", id, direction: "forward" });
+  }, [selectedIds, dispatchAndNotify]);
+
+  const handleSendBackward = useCallback(() => {
+    const id = selectedIds[0];
+    if (!id) return;
+    dispatchAndNotify({ type: "REORDER", id, direction: "backward" });
+  }, [selectedIds, dispatchAndNotify]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -365,13 +434,22 @@ export function AnnotationCanvas({
       if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); onSave(annotationsRef.current); return; }
 
       if (e.key === "h" || e.key === "H") { setPanMode((p) => !p); setDraw({ phase: "idle" }); return; }
-      if (e.key === "Escape") { setPanMode(false); setTool("select"); setDraw({ phase: "idle" }); setRelabelId(null); return; }
+      if (e.key === "Escape") { setMarquee(null); setPanMode(false); setTool("select"); setDraw({ phase: "idle" }); setRelabelId(null); return; }
       if (e.key === "v" || e.key === "V") { setPanMode(false); setTool("select"); setDraw({ phase: "idle" }); return; }
       if (e.key === "b" || e.key === "B") { setPanMode(false); setTool("bbox"); setDraw({ phase: "idle" }); return; }
       if (e.key === "p" || e.key === "P") { setPanMode(false); setTool("polygon"); setDraw({ phase: "idle" }); return; }
       if (e.key === "l" || e.key === "L") { setPanMode(false); setTool("line"); setDraw({ phase: "idle" }); return; }
       if (e.key === "n" || e.key === "N") { setPanMode(false); setTool("point"); setDraw({ phase: "idle" }); return; }
       if (e.key === "c" || e.key === "C") { setPanMode(false); setTool("circle"); setDraw({ phase: "idle" }); return; }
+
+      // Shape boolean ops (area shapes only)
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !readonly) {
+        if (e.key === "U" || e.key === "u") { e.preventDefault(); handleMerge(); return; }
+        if (e.key === "I" || e.key === "i") { e.preventDefault(); handleIntersect(); return; }
+        if (e.key === "H" || e.key === "h") { e.preventDefault(); handleCutHole(); return; }
+        if (e.key === "O" || e.key === "o") { e.preventDefault(); handleToggleFill(); return; }
+        if (e.key === "_" || e.key === "-") { e.preventDefault(); handleSubtract(); return; }
+      }
 
       if ((e.key === "Delete" || e.key === "Backspace") && selectedIds.length > 0) {
         if (selectedIds.length === 1) {
@@ -402,7 +480,7 @@ export function AnnotationCanvas({
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp); };
-  }, [draw, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelId]);
+  }, [draw, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelId, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill]);
 
   // ---------------------------------------------------------------------------
   // Stage event handlers
@@ -432,7 +510,12 @@ export function AnnotationCanvas({
     const isStageClick = e.target === e.target.getStage() || e.target.name() === "bg-image";
     const imgPos = getImagePos(e);
 
-    if (tool === "select") { if (isStageClick) setSelectedIds([]); return; }
+    if (tool === "select") {
+      if (isStageClick) {
+        setMarquee({ start: imgPos, cur: imgPos, additive: e.evt.shiftKey });
+      }
+      return;
+    }
     if (tool === "bbox") { setDraw({ phase: "bbox-drawing", start: imgPos, cur: imgPos }); return; }
 
     if (tool === "polygon") {
@@ -474,6 +557,11 @@ export function AnnotationCanvas({
       const dx = e.evt.clientX - panStart.current.x;
       const dy = e.evt.clientY - panStart.current.y;
       setStagePos({ x: panStart.current.stageX + dx, y: panStart.current.stageY + dy });
+      return;
+    }
+
+    if (marquee) {
+      setMarquee({ ...marquee, cur: imgPos });
       return;
     }
 
@@ -523,7 +611,7 @@ export function AnnotationCanvas({
         setDraggingVertex({ ...draggingVertex, startImg: imgPos });
       }
     }
-  }, [draw, stagePos, scale, draggingAnnotation, draggingHandle, draggingVertex, selectedIds, dispatchAndNotify]);
+  }, [draw, stagePos, scale, draggingAnnotation, draggingHandle, draggingVertex, selectedIds, dispatchAndNotify, marquee]);
 
   const handleStageMouseUp = useCallback((e: KonvaEventObject<MouseEvent>) => {
     if (panStart.current) {
@@ -531,6 +619,26 @@ export function AnnotationCanvas({
       setIsPanning(false);
       return;
     }
+
+    if (marquee) {
+      const box = bboxToKonva([marquee.start, marquee.cur]);
+      const dragged = box.w > 4 || box.h > 4;
+      if (!dragged) {
+        if (!marquee.additive) setSelectedIds([]);
+      } else {
+        const hits = annotationsRef.current
+          .filter((ann) => boxesIntersect(box, getAnnotationBounds(ann)))
+          .map((ann) => ann.id);
+        if (marquee.additive) {
+          setSelectedIds((prev) => [...new Set([...prev, ...hits])]);
+        } else {
+          setSelectedIds(hits);
+        }
+      }
+      setMarquee(null);
+      return;
+    }
+
     if (readonly) return;
     const imgPos = getImagePos(e);
     if (draw.phase === "bbox-drawing") {
@@ -547,7 +655,7 @@ export function AnnotationCanvas({
     setDraggingAnnotation(null);
     setDraggingHandle(null);
     setDraggingVertex(null);
-  }, [readonly, draw, getImagePos]);
+  }, [readonly, draw, getImagePos, marquee]);
 
   const handleWheel = useCallback((e: KonvaEventObject<WheelEvent>) => {
     e.evt.preventDefault();
@@ -566,7 +674,13 @@ export function AnnotationCanvas({
   const handleAnnotationClick = useCallback((id: string, e: KonvaEventObject<MouseEvent>) => {
     if (tool !== "select" || readonly || panMode) return;
     e.cancelBubble = true;
-    setSelectedIds([id]);
+    if (e.evt.shiftKey || e.evt.metaKey || e.evt.ctrlKey) {
+      setSelectedIds((prev) =>
+        prev.includes(id) ? prev.filter((sid) => sid !== id) : [...prev, id],
+      );
+    } else {
+      setSelectedIds([id]);
+    }
   }, [tool, readonly, panMode]);
 
   const handleAnnotationMouseDown = useCallback((id: string, e: KonvaEventObject<MouseEvent>) => {
@@ -665,6 +779,7 @@ export function AnnotationCanvas({
   const stageCursor = isPanning ? "grabbing"
     : panMode ? "grab"
     : spaceDown ? "grab"
+    : tool === "select" && !readonly ? "crosshair"
     : tool === "select" ? "default"
     : "crosshair";
 
@@ -684,7 +799,42 @@ export function AnnotationCanvas({
     const baseStrokeWidth = isEngine ? 1.5 : 2;
     const strokeWidth = isSelected ? 2 : isHovered ? 2.5 : baseStrokeWidth;
     const opacity = isEngine ? 0.85 : 1.0;
-    const fillAlpha = isSelected ? 0.18 : isHovered ? 0.15 : isEngine ? 0.08 : 0.12;
+    const shapeMeta = ann.meta as ShapeMeta | undefined;
+    const isHollowFill = shapeMeta?.hollow === true;
+    const fillAlpha = isHollowFill ? 0 : isSelected ? 0.18 : isHovered ? 0.15 : isEngine ? 0.08 : 0.12;
+    const rings = getAnnotationRings(ann);
+    const hasHoles = (shapeMeta?.rings?.length ?? 0) > 1;
+
+    const renderCompoundArea = (strokeProps: typeof commonProps) => (
+      <Shape
+        {...strokeProps}
+        fill={hexToRgba(color, fillAlpha)}
+        fillEnabled={!isHollowFill}
+        fillRule="evenodd"
+        sceneFunc={(ctx, shape) => {
+          ctx.beginPath();
+          for (const ring of rings) {
+            ring.forEach(([x, y], i) => {
+              if (i === 0) ctx.moveTo(x, y);
+              else ctx.lineTo(x, y);
+            });
+            ctx.closePath();
+          }
+          ctx.fillStrokeShape(shape);
+        }}
+        hitFunc={(ctx, shape) => {
+          ctx.beginPath();
+          for (const ring of rings) {
+            ring.forEach(([x, y], i) => {
+              if (i === 0) ctx.moveTo(x, y);
+              else ctx.lineTo(x, y);
+            });
+            ctx.closePath();
+          }
+          ctx.fillStrokeShape(shape);
+        }}
+      />
+    );
 
     const handleDblClick = (e: KonvaEventObject<MouseEvent>) => {
       if (tool !== "select" || readonly) return;
@@ -750,9 +900,17 @@ export function AnnotationCanvas({
 
     if (ann.type === "bbox") {
       const { x, y, w, h } = bboxToKonva(ann.points);
+      if (hasHoles) {
+        return (
+          <Group key={ann.id}>
+            {renderCompoundArea(commonProps)}
+            {chip}
+          </Group>
+        );
+      }
       return (
         <Group key={ann.id}>
-          <Rect x={x} y={y} width={w} height={h} fill={hexToRgba(color, fillAlpha)} {...commonProps} />
+          <Rect x={x} y={y} width={w} height={h} fill={hexToRgba(color, fillAlpha)} fillEnabled={!isHollowFill} {...commonProps} />
           {showHandles && bboxHandles(x, y, w, h).map((handle, i) => (
             <Circle key={i} x={handle.pos[0]} y={handle.pos[1]}
               radius={HANDLE_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={2 / scale}
@@ -770,9 +928,17 @@ export function AnnotationCanvas({
     if (ann.type === "circle") {
       const { x, y, w } = bboxToKonva(ann.points);
       const cx = x + w / 2, cy = y + w / 2, r = w / 2;
+      if (hasHoles) {
+        return (
+          <Group key={ann.id}>
+            {renderCompoundArea(commonProps)}
+            {chip}
+          </Group>
+        );
+      }
       return (
         <Group key={ann.id}>
-          <Ellipse x={cx} y={cy} radiusX={r} radiusY={r} fill={hexToRgba(color, fillAlpha)} {...commonProps} />
+          <Ellipse x={cx} y={cy} radiusX={r} radiusY={r} fill={hexToRgba(color, fillAlpha)} fillEnabled={!isHollowFill} {...commonProps} />
           {showHandles && ([
             [cx, cy - r], [cx + r, cy], [cx, cy + r], [cx - r, cy],
           ] as [number, number][]).map(([hx, hy], i) => (
@@ -790,9 +956,25 @@ export function AnnotationCanvas({
     }
 
     if (ann.type === "polygon") {
+      if (hasHoles) {
+        return (
+          <Group key={ann.id}>
+            {renderCompoundArea(commonProps)}
+            {showHandles && rings[0]?.map(([x, y], i) => (
+              <Circle key={i} x={x} y={y} radius={VERTEX_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={1.5 / scale}
+                onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
+                  e.cancelBubble = true;
+                  setDraggingVertex({ annId: ann.id, vertIdx: i, startImg: getImagePos(e) });
+                }}
+              />
+            ))}
+            {chip}
+          </Group>
+        );
+      }
       return (
         <Group key={ann.id}>
-          <Line points={ann.points.flatMap(([x, y]) => [x, y])} closed fill={hexToRgba(color, fillAlpha)} {...commonProps} />
+          <Line points={ann.points.flatMap(([x, y]) => [x, y])} closed fill={hexToRgba(color, fillAlpha)} fillEnabled={!isHollowFill} {...commonProps} />
           {showHandles && ann.points.map(([x, y], i) => (
             <Circle key={i} x={x} y={y} radius={VERTEX_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={1.5 / scale}
               onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
@@ -846,6 +1028,20 @@ export function AnnotationCanvas({
   // ---------------------------------------------------------------------------
 
   const renderDraw = () => {
+    if (marquee) {
+      const { x, y, w, h } = bboxToKonva([marquee.start, marquee.cur]);
+      return (
+        <Rect
+          x={x} y={y} width={w} height={h}
+          stroke={resolved.accent}
+          strokeWidth={1.5 / scale}
+          fill={resolved.selection}
+          dash={[4 / scale, 4 / scale]}
+          listening={false}
+        />
+      );
+    }
+
     if (draw.phase === "bbox-drawing") {
       const { x, y, w, h } = bboxToKonva([draw.start, draw.cur]);
       return <Rect x={x} y={y} width={w} height={h} stroke={resolved.accent} strokeWidth={1.5 / scale} fill={hexToRgba(resolved.accent, 0.1)} dash={[4 / scale, 4 / scale]} />;
@@ -890,6 +1086,11 @@ export function AnnotationCanvas({
   // ---------------------------------------------------------------------------
 
   const availableTools = tools ?? (["select", "bbox", "polygon", "line", "point", "circle"] as ToolType[]);
+  const selectedAreaCount = selectedIds
+    .map((id) => annotations.find((a) => a.id === id))
+    .filter((a): a is CanonicalAnnotation => a != null && isAreaAnnotation(a)).length;
+  const singleSelected = selectedIds.length === 1 ? annotations.find((a) => a.id === selectedIds[0]) : undefined;
+  const singleIsHollow = (singleSelected?.meta as ShapeMeta | undefined)?.hollow === true;
 
   const cssVars = themeToCssVars(resolved) as React.CSSProperties;
 
@@ -911,6 +1112,22 @@ export function AnnotationCanvas({
           onRedo={handleRedo}
         />
         <div ref={containerRef} style={{ flex: 1, background: "var(--ae-bg-canvas)", position: "relative", overflow: "hidden", cursor: stageCursor }}>
+          {!readonly && (
+            <ShapeOpsBar
+              count={selectedIds.length}
+              areaCount={selectedAreaCount}
+              canLayer={selectedIds.length === 1}
+              readonly={readonly}
+              isHollow={singleIsHollow}
+              onMerge={handleMerge}
+              onSubtract={handleSubtract}
+              onIntersect={handleIntersect}
+              onHollow={handleCutHole}
+              onToggleFill={handleToggleFill}
+              onBringForward={handleBringForward}
+              onSendBackward={handleSendBackward}
+            />
+          )}
           <Stage
             ref={stageRef}
             width={containerSize.w}
