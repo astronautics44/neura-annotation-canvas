@@ -35,6 +35,18 @@ npm install react react-dom
 
 You do not need to install Konva separately. The canvas package brings its own canvas dependencies.
 
+### Updating an Existing Install
+
+If your app already uses an older version of the package, update to the latest released version:
+
+```bash
+npm install @astronautics44/neura-annotation-canvas@0.1.7
+```
+
+Then restart your app or dev server.
+
+If your project has a lockfile, such as `package-lock.json`, commit the updated lockfile after running the install command.
+
 ## 3. Create Your Labels
 
 Labels define what classes users can assign to annotations.
