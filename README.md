@@ -2,6 +2,8 @@
 
 A professional-grade React annotation component for reviewing and correcting CV engine output on construction drawings. Built for the same use-case class as CVAT and Roboflow — canvas-first, keyboard-driven, designed for engineers doing quantity takeoffs.
 
+For consumer installation and app integration, see [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
+
 ---
 
 ## What it does
@@ -103,20 +105,7 @@ In GitHub Actions (consumer repo):
 
 ## Installation in a client webapp
 
-The package is not yet published to npm. Add it as a workspace dependency or path alias.
-
-```bash
-# As a local path dep in your package.json:
-"@astronautics44/neura-annotation-canvas": "file:../annotation-engine/package"
-```
-
-Required peer deps:
-
-```bash
-npm install react react-dom
-```
-
-The package bundles Konva, react-konva, and use-image — you do not install those separately.
+For step-by-step consumer setup, including GitHub Packages auth, installation, labels, adapters, Next.js usage, and save handling, see [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
 
 ---
 

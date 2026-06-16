@@ -438,6 +438,7 @@ export function AnnotationCanvas({
       if (e.key === "v" || e.key === "V") { setPanMode(false); setTool("select"); setDraw({ phase: "idle" }); return; }
       if (e.key === "b" || e.key === "B") { setPanMode(false); setTool("bbox"); setDraw({ phase: "idle" }); return; }
       if (e.key === "p" || e.key === "P") { setPanMode(false); setTool("polygon"); setDraw({ phase: "idle" }); return; }
+      if (e.key === "y" || e.key === "Y") { setPanMode(false); setTool("polyline"); setDraw({ phase: "idle" }); return; }
       if (e.key === "l" || e.key === "L") { setPanMode(false); setTool("line"); setDraw({ phase: "idle" }); return; }
       if (e.key === "n" || e.key === "N") { setPanMode(false); setTool("point"); setDraw({ phase: "idle" }); return; }
       if (e.key === "c" || e.key === "C") { setPanMode(false); setTool("circle"); setDraw({ phase: "idle" }); return; }
@@ -471,6 +472,11 @@ export function AnnotationCanvas({
       if (e.key === "Enter" && draw.phase === "polygon-drawing" && draw.pts.length >= 3) {
         const pos = draw.pts[draw.pts.length - 1] ?? [0, 0];
         setDraw({ phase: "polygon-pending", pts: draw.pts, pos: pos as [number, number] });
+        return;
+      }
+      if (e.key === "Enter" && draw.phase === "polyline-drawing" && draw.pts.length >= 2) {
+        const pos = draw.pts[draw.pts.length - 1] ?? [0, 0];
+        setDraw({ phase: "polyline-pending", pts: draw.pts, pos: pos as [number, number] });
         return;
       }
     };
@@ -535,6 +541,15 @@ export function AnnotationCanvas({
       return;
     }
 
+    if (tool === "polyline") {
+      if (draw.phase === "polyline-drawing") {
+        setDraw({ ...draw, pts: [...draw.pts, imgPos] });
+      } else {
+        setDraw({ phase: "polyline-drawing", pts: [imgPos], cur: imgPos });
+      }
+      return;
+    }
+
     if (tool === "line") {
       if (draw.phase === "line-drawing") setDraw({ phase: "line-pending", points: [draw.start, imgPos], pos: imgPos });
       else setDraw({ phase: "line-drawing", start: imgPos, cur: imgPos });
@@ -567,6 +582,7 @@ export function AnnotationCanvas({
 
     if (draw.phase === "bbox-drawing") setDraw({ ...draw, cur: imgPos });
     if (draw.phase === "polygon-drawing") setDraw({ ...draw, cur: imgPos });
+    if (draw.phase === "polyline-drawing") setDraw({ ...draw, cur: imgPos });
     if (draw.phase === "line-drawing") setDraw({ ...draw, cur: imgPos });
     if (draw.phase === "circle-drawing") setDraw({ ...draw, cur: imgPos });
 
@@ -713,6 +729,8 @@ export function AnnotationCanvas({
       dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "bbox", points: draw.points, label, source: "human" } });
     } else if (draw.phase === "polygon-pending") {
       dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "polygon", points: draw.pts, label, source: "human" } });
+    } else if (draw.phase === "polyline-pending") {
+      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "polyline", points: draw.pts, label, source: "human" } });
     } else if (draw.phase === "line-pending") {
       dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "line", points: draw.points, label, source: "human" } });
     } else if (draw.phase === "point-pending") {
@@ -742,7 +760,7 @@ export function AnnotationCanvas({
   }, [labels, onLabelsChange]);
 
   const popoverPos = (): { x: number; y: number } | null => {
-    if (!["bbox-pending","polygon-pending","line-pending","point-pending","circle-pending"].includes(draw.phase)) return null;
+    if (!["bbox-pending","polygon-pending","polyline-pending","line-pending","point-pending","circle-pending"].includes(draw.phase)) return null;
     const pos = (draw as { pos: [number,number] }).pos;
     return { x: pos[0] * scale + stagePos.x, y: pos[1] * scale + stagePos.y };
   };
@@ -859,7 +877,7 @@ export function AnnotationCanvas({
     if (ann.type === "bbox" || ann.type === "circle") {
       chipX = Math.min(ann.points[0]![0], ann.points[1]![0]);
       chipY = Math.min(ann.points[0]![1], ann.points[1]![1]) - 16 / scale;
-    } else if (ann.type === "polygon" || ann.type === "line") {
+    } else if (ann.type === "polygon" || ann.type === "polyline" || ann.type === "line") {
       const c = centroid(ann.points);
       chipX = c[0]; chipY = c[1];
     } else if (ann.type === "point") {
@@ -883,6 +901,14 @@ export function AnnotationCanvas({
         const dx = ann.points[1]![0] - ann.points[0]![0];
         const dy = ann.points[1]![1] - ann.points[0]![1];
         chipDim = ` ${formatDim(Math.hypot(dx, dy))}`;
+      } else if (ann.type === "polyline") {
+        let length = 0;
+        for (let i = 1; i < ann.points.length; i++) {
+          const prev = ann.points[i - 1]!;
+          const cur = ann.points[i]!;
+          length += Math.hypot(cur[0] - prev[0], cur[1] - prev[1]);
+        }
+        chipDim = ` ${formatDim(length)}`;
       }
     }
 
@@ -988,7 +1014,7 @@ export function AnnotationCanvas({
       );
     }
 
-    if (ann.type === "line") {
+    if (ann.type === "line" || ann.type === "polyline") {
       return (
         <Group key={ann.id}>
           <Line points={ann.points.flatMap(([x, y]) => [x, y])} hitStrokeWidth={10 / scale} {...commonProps} />
@@ -1063,6 +1089,31 @@ export function AnnotationCanvas({
       );
     }
 
+    if (draw.phase === "polyline-drawing" && draw.pts.length > 0) {
+      const flat = draw.pts.flatMap(([x, y]) => [x, y]);
+      const lastPt = draw.pts[draw.pts.length - 1]!;
+      const hint = draw.pts.length >= 2 ? "Enter to finish · Esc to cancel" : "Click to add points · Esc to cancel";
+      const hintWidth = hint.length * 7 / scale + 12 / scale;
+      return (
+        <Group>
+          {draw.pts.length > 1 && <Line points={flat} stroke={resolved.accent} strokeWidth={1.5 / scale} />}
+          <Line points={[lastPt[0], lastPt[1], draw.cur[0], draw.cur[1]]} stroke={resolved.accent} strokeWidth={1.5 / scale} dash={[4 / scale, 4 / scale]} />
+          {draw.pts.map(([x, y], i) => <Circle key={i} x={x} y={y} radius={4 / scale} fill={resolved.handleFill} stroke={resolved.accent} strokeWidth={1 / scale} />)}
+          <Group x={draw.cur[0] + 10 / scale} y={draw.cur[1] + 10 / scale}>
+            <Rect
+              width={hintWidth}
+              height={18 / scale}
+              fill={hexToRgba(resolved.bgElevated, 0.9)}
+              stroke={hexToRgba(resolved.accent, 0.45)}
+              strokeWidth={1 / scale}
+              cornerRadius={4 / scale}
+            />
+            <Text x={6 / scale} y={3 / scale} text={hint} fontSize={11 / scale} fill={resolved.textPrimary} fontFamily="system-ui" />
+          </Group>
+        </Group>
+      );
+    }
+
     if (draw.phase === "line-drawing") {
       return <Line points={[draw.start[0], draw.start[1], draw.cur[0], draw.cur[1]]} stroke={resolved.accent} strokeWidth={1.5 / scale} dash={[4 / scale, 4 / scale]} />;
     }
@@ -1085,7 +1136,7 @@ export function AnnotationCanvas({
   // Layout
   // ---------------------------------------------------------------------------
 
-  const availableTools = tools ?? (["select", "bbox", "polygon", "line", "point", "circle"] as ToolType[]);
+  const availableTools = tools ?? (["select", "bbox", "polygon", "polyline", "line", "point", "circle"] as ToolType[]);
   const selectedAreaCount = selectedIds
     .map((id) => annotations.find((a) => a.id === id))
     .filter((a): a is CanonicalAnnotation => a != null && isAreaAnnotation(a)).length;
