@@ -3,6 +3,7 @@
 A professional-grade React annotation component for reviewing and correcting CV engine output on construction drawings. Built for the same use-case class as CVAT and Roboflow — canvas-first, keyboard-driven, designed for engineers doing quantity takeoffs.
 
 For consumer installation and app integration, see [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
+For making changes and publishing a new version, see [`docs/RELEASING.md`](docs/RELEASING.md).
 
 ---
 
