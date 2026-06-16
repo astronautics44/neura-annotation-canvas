@@ -32,6 +32,8 @@ export type DrawState =
   | { phase: "bbox-pending"; points: [[number, number], [number, number]]; pos: [number, number] }
   | { phase: "polygon-drawing"; pts: [number, number][]; cur: [number, number] }
   | { phase: "polygon-pending"; pts: [number, number][]; pos: [number, number] }
+  | { phase: "polyline-drawing"; pts: [number, number][]; cur: [number, number] }
+  | { phase: "polyline-pending"; pts: [number, number][]; pos: [number, number] }
   | { phase: "line-drawing"; start: [number, number]; cur: [number, number] }
   | { phase: "line-pending"; points: [[number, number], [number, number]]; pos: [number, number] }
   | { phase: "point-pending"; pt: [number, number]; pos: [number, number] }

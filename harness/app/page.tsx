@@ -188,7 +188,8 @@ export default function Page() {
           <span style={{ fontSize: 11, color: lightTheme.textMuted }}>
             <kbd style={kbdStyle}>B</kbd> bbox &nbsp;
             <kbd style={kbdStyle}>C</kbd> circle &nbsp;
-            <kbd style={kbdStyle}>P</kbd> polygon
+            <kbd style={kbdStyle}>P</kbd> polygon &nbsp;
+            <kbd style={kbdStyle}>Y</kbd> polyline
           </span>
           <span style={{ fontSize: 11, color: lightTheme.textMuted }}>
             <kbd style={kbdStyle}>Ctrl+A</kbd> select all

@@ -33,6 +33,10 @@ const TOOL_META: Record<ToolType, ButtonDef> = {
     id: "polygon", label: "Polygon", shortcut: "P",
     icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2 L20 8 L17 19 L7 19 L4 8 Z"/></svg>,
   },
+  polyline: {
+    id: "polyline", label: "Polyline", shortcut: "Y, Enter to finish",
+    icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 8 8 13 14 20 6"/><circle cx="4" cy="17" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="14" r="1.5"/><circle cx="20" cy="6" r="1.5"/></svg>,
+  },
   line: {
     id: "line", label: "Line", shortcut: "L",
     icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>,
