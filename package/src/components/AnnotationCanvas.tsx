@@ -452,7 +452,7 @@ export function AnnotationCanvas({
         if (e.key === "_" || e.key === "-") { e.preventDefault(); handleSubtract(); return; }
       }
 
-      if ((e.key === "Delete" || e.key === "Backspace") && selectedIds.length > 0) {
+      if ((e.key === "Delete" || e.key === "Backspace") && selectedIds.length > 0 && !readonly) {
         if (selectedIds.length === 1) {
           dispatchAndNotify({ type: "DELETE", id: selectedIds[0]! });
         } else {
@@ -694,14 +694,20 @@ export function AnnotationCanvas({
       setSelectedIds((prev) =>
         prev.includes(id) ? prev.filter((sid) => sid !== id) : [...prev, id],
       );
-    } else {
+    } else if (!selectedIds.includes(id)) {
+      // Plain click on an unselected annotation replaces the selection.
       setSelectedIds([id]);
     }
-  }, [tool, readonly, panMode]);
+    // Plain click on an already-selected annotation keeps the current multi-selection
+    // so the user can drag the group without collapsing it.
+  }, [tool, readonly, panMode, selectedIds]);
 
   const handleAnnotationMouseDown = useCallback((id: string, e: KonvaEventObject<MouseEvent>) => {
     if (tool !== "select" || readonly || panMode) return;
     e.cancelBubble = true;
+
+    // Modifier clicks toggle selection on mouse-up; don't start a drag here.
+    if (e.evt.shiftKey || e.evt.metaKey || e.evt.ctrlKey) return;
 
     if (e.evt.altKey) {
       // Alt+drag: duplicate the selection (or just this annotation) and drag the copies
@@ -1239,11 +1245,18 @@ export function AnnotationCanvas({
           annotations={annotations}
           labels={labels}
           selectedIds={selectedIds}
+          readonly={readonly}
           onCreateLabel={readonly ? undefined : handleCreateLabel}
           width={resolved.panelWidth}
           height={containerSize.h}
-          onSelect={(id) => {
-            setSelectedIds([id]);
+          onSelect={(id, additive) => {
+            if (additive) {
+              setSelectedIds((prev) =>
+                prev.includes(id) ? prev.filter((sid) => sid !== id) : [...prev, id],
+              );
+            } else {
+              setSelectedIds([id]);
+            }
             const ann = annotations.find((a) => a.id === id);
             if (!ann) return;
             const c = ann.type === "point" ? ann.points[0]! : centroid(ann.points);
@@ -1256,6 +1269,15 @@ export function AnnotationCanvas({
           onDelete={(id) => {
             dispatchAndNotify({ type: "DELETE", id });
             setSelectedIds((prev) => prev.filter((sid) => sid !== id));
+          }}
+          onDeleteSelected={() => {
+            if (selectedIds.length === 0 || readonly) return;
+            if (selectedIds.length === 1) {
+              dispatchAndNotify({ type: "DELETE", id: selectedIds[0]! });
+            } else {
+              dispatchAndNotify({ type: "DELETE_MANY", ids: selectedIds });
+            }
+            setSelectedIds([]);
           }}
           onRelabel={(id, label) => {
             const ann = annotations.find((a) => a.id === id);
@@ -1359,6 +1381,14 @@ export function AnnotationCanvas({
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {selectedIds.length > 0 && (
+            <span>
+              {selectedIds.length} selected
+              {!readonly && selectedIds.length > 1 && (
+                <span style={{ color: "var(--ae-text-muted)" }}> · Del to delete</span>
+              )}
+            </span>
+          )}
           <span style={{ fontFamily: "'JetBrains Mono','Fira Code',monospace" }}>x: {Math.round(cursorImg[0])} y: {Math.round(cursorImg[1])}</span>
           {showFullscreen && (
             <button

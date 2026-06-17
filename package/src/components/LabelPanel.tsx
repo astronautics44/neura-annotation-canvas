@@ -8,10 +8,12 @@ interface Props {
   annotations: CanonicalAnnotation[];
   labels: LabelMap[];
   selectedIds: string[];
-  onSelect: (id: string) => void;
+  onSelect: (id: string, additive: boolean) => void;
   onDelete: (id: string) => void;
+  onDeleteSelected?: () => void;
   onRelabel: (id: string, label: string) => void;
   onCreateLabel?: ((displayName: string) => string) | undefined;
+  readonly?: boolean;
   width?: number;
   height?: number;
 }
@@ -22,8 +24,10 @@ export function LabelPanel({
   selectedIds,
   onSelect,
   onDelete,
+  onDeleteSelected,
   onRelabel,
   onCreateLabel,
+  readonly = false,
   width = 220,
   height,
 }: Props) {
@@ -122,19 +126,45 @@ export function LabelPanel({
           >
             Annotations
           </span>
-          <span
-            style={{
-              fontSize: 11,
-              background: "var(--ae-bg-elevated)",
-              borderRadius: 10,
-              padding: "1px 7px",
-              color: "var(--ae-text-primary)",
-              fontVariantNumeric: "tabular-nums",
-              letterSpacing: "0.02em",
-            }}
-          >
-            {annotations.length}
-          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {selectedIds.length > 1 && !readonly && onDeleteSelected && (
+              <button
+                title={`Delete ${selectedIds.length} selected`}
+                onClick={onDeleteSelected}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  fontSize: 10,
+                  background: "rgba(239,68,68,0.12)",
+                  border: "1px solid rgba(239,68,68,0.35)",
+                  borderRadius: 6,
+                  padding: "2px 6px",
+                  color: "var(--ae-danger)",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                <svg width="10" height="10" viewBox="0 0 16 16" fill="none">
+                  <path d="M3 4h10M6 4V2h4v2M5 4l1 9h4l1-9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                {selectedIds.length}
+              </button>
+            )}
+            <span
+              style={{
+                fontSize: 11,
+                background: "var(--ae-bg-elevated)",
+                borderRadius: 10,
+                padding: "1px 7px",
+                color: "var(--ae-text-primary)",
+                fontVariantNumeric: "tabular-nums",
+                letterSpacing: "0.02em",
+              }}
+            >
+              {annotations.length}
+            </span>
+          </div>
         </div>
 
         {/* Search */}
@@ -307,7 +337,12 @@ export function LabelPanel({
                   return (
                     <div
                       key={ann.id}
-                      onClick={() => onSelect(ann.id)}
+                      onClick={(e) =>
+                        onSelect(
+                          ann.id,
+                          e.shiftKey || e.metaKey || e.ctrlKey,
+                        )
+                      }
                       onMouseEnter={() => setHoveredRow(ann.id)}
                       onMouseLeave={() => setHoveredRow(null)}
                       style={{
@@ -383,7 +418,7 @@ export function LabelPanel({
                       </span>
 
                       {/* Hover actions */}
-                      {isHovered && (
+                      {isHovered && !readonly && (
                         <div
                           style={{ display: "flex", gap: 2, flexShrink: 0 }}
                           onClick={(e) => e.stopPropagation()}
@@ -447,7 +482,12 @@ export function LabelPanel({
             {ungrouped.map((ann) => (
               <div
                 key={ann.id}
-                onClick={() => onSelect(ann.id)}
+                onClick={(e) =>
+                  onSelect(
+                    ann.id,
+                    e.shiftKey || e.metaKey || e.ctrlKey,
+                  )
+                }
                 style={{
                   padding: "4px 12px",
                   fontSize: 11,
