@@ -13,11 +13,31 @@ Create or update `.npmrc` in your app:
 //npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
 ```
 
-For local development, export a GitHub token with `read:packages` access:
+The `.npmrc` file reads the token from an environment variable named `NODE_AUTH_TOKEN`. That token should come from the app's environment, not from a hardcoded value in `.npmrc`.
+
+For local development, create a GitHub token with `read:packages` access:
+
+1. Open GitHub in your browser.
+2. Go to **Settings** -> **Developer settings** -> **Personal access tokens**.
+3. Create a token that has `read:packages` access.
+4. Copy the token. It will look similar to `ghp_...`.
+5. In your terminal, inside your app repo, export it:
 
 ```bash
 export NODE_AUTH_TOKEN=ghp_your_token_here
 ```
+
+This only sets the token for the current terminal session. If you close the terminal, you may need to export it again before running `npm install`.
+
+For production or CI, do not use the terminal `export` step. Instead, add `NODE_AUTH_TOKEN` as a secret/environment variable in the platform that builds the app, such as GitHub Actions, Vercel, Netlify, Render, Railway, or your Docker build environment. When that platform runs `npm install` or `npm ci`, npm reads `.npmrc`, finds `${NODE_AUTH_TOKEN}`, and uses the token from the app's build environment.
+
+To confirm the token is available in your terminal:
+
+```bash
+echo $NODE_AUTH_TOKEN
+```
+
+It should print your token. If it prints nothing, export the token again.
 
 Never commit a real token to git.
 
@@ -46,6 +66,101 @@ npm install @astronautics44/neura-annotation-canvas@0.1.7
 Then restart your app or dev server.
 
 If your project has a lockfile, such as `package-lock.json`, commit the updated lockfile after running the install command.
+
+### AWS EC2 Setup
+
+If your app is deployed on an AWS EC2 instance, npm still needs access to GitHub Packages during install/build.
+
+The token is only needed on the EC2 server while running `npm install` or `npm ci`. The running Next.js app does not need the token in browser/runtime code.
+
+Recommended EC2 setup with Docker:
+
+1. SSH into the EC2 instance:
+
+```bash
+ssh ubuntu@your-ec2-ip
+```
+
+2. Keep this `.npmrc` in the app repo:
+
+```ini
+@astronautics44:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
+```
+
+3. Pass `NODE_AUTH_TOKEN` only while building the Docker image.
+
+Recommended, using Docker BuildKit secrets:
+
+```bash
+export NODE_AUTH_TOKEN=ghp_your_real_token_here
+
+DOCKER_BUILDKIT=1 docker build \
+  --secret id=npm_token,env=NODE_AUTH_TOKEN \
+  -t your-nextjs-app .
+```
+
+4. In your `Dockerfile`, make the token available only for the install step:
+
+```dockerfile
+COPY .npmrc .npmrc
+COPY package*.json ./
+RUN --mount=type=secret,id=npm_token \
+  NODE_AUTH_TOKEN="$(cat /run/secrets/npm_token)" npm ci
+
+# Remove npm auth before copying/running the rest of the app.
+RUN rm -f .npmrc
+
+COPY . .
+RUN npm run build
+```
+
+5. Run the built image:
+
+```bash
+docker run -d --name your-nextjs-app -p 3000:3000 your-nextjs-app
+```
+
+Important: the token is needed to download the package while the Docker image is being built. The running container does not need the token unless you run `npm install` inside the running container.
+
+Avoid baking the token into the final Docker image. Do not add `ENV NODE_AUTH_TOKEN=...` to the Dockerfile.
+
+If your Docker setup cannot use BuildKit secrets, you can use a build arg instead:
+
+```bash
+docker build \
+  --build-arg NODE_AUTH_TOKEN=ghp_your_real_token_here \
+  -t your-nextjs-app .
+```
+
+Build arg Dockerfile install step:
+
+```dockerfile
+ARG NODE_AUTH_TOKEN
+COPY .npmrc .npmrc
+COPY package*.json ./
+RUN npm ci
+RUN rm -f .npmrc
+```
+
+Alternative EC2 setup without Docker:
+
+Save the GitHub Packages auth in the server user's npm config:
+
+```bash
+npm config set @astronautics44:registry https://npm.pkg.github.com
+npm config set //npm.pkg.github.com/:_authToken ghp_your_real_token_here
+```
+
+Then install/build on the server:
+
+```bash
+cd /path/to/your/nextjs-app
+npm install
+npm run build
+```
+
+Do not use `NEXT_PUBLIC_NODE_AUTH_TOKEN`. Anything starting with `NEXT_PUBLIC_` can be exposed to the browser.
 
 ## 3. Create Your Labels
 
