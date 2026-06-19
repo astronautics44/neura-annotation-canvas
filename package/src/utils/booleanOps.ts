@@ -7,8 +7,18 @@ type MultiPolygon = Polygon[];
 
 export type BooleanOp = "union" | "subtract" | "intersect";
 
+export interface FrameInsets {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
 export interface ShapeMeta {
   hollow?: boolean;
+  frame?: boolean;
+  /** Custom per-side insets for the inner hole when frame is enabled. */
+  frameInsets?: FrameInsets;
   /** First ring is outer boundary; additional rings are holes (even-odd fill). */
   rings?: [number, number][][];
   booleanOp?: BooleanOp;
@@ -257,11 +267,45 @@ export function toggleHollow(ann: CanonicalAnnotation): CanonicalAnnotation {
   };
 }
 
+const MIN_INSET = 4;
+
 export function getAnnotationRings(ann: CanonicalAnnotation): [number, number][][] {
   const meta = ann.meta as ShapeMeta | undefined;
   if (meta?.rings?.length) return meta.rings;
-  if (ann.type === "bbox") return [openRing(bboxRing(ann.points))];
-  if (ann.type === "circle") return [openRing(circleRing(ann.points))];
+  if (ann.type === "bbox") {
+    const outer = openRing(bboxRing(ann.points));
+    if (meta?.frame) {
+      const { x, y, w, h } = bboxToKonva(ann.points);
+      const ins = meta.frameInsets;
+      const il = ins ? Math.min(ins.left, (w - MIN_INSET) / 2) : Math.min(w, h) * 0.15;
+      const it = ins ? Math.min(ins.top, (h - MIN_INSET) / 2) : Math.min(w, h) * 0.15;
+      const ir = ins ? Math.min(ins.right, (w - MIN_INSET) / 2) : Math.min(w, h) * 0.15;
+      const ib = ins ? Math.min(ins.bottom, (h - MIN_INSET) / 2) : Math.min(w, h) * 0.15;
+      const inner: [number, number][] = [
+        [x + il, y + it],
+        [x + w - ir, y + it],
+        [x + w - ir, y + h - ib],
+        [x + il, y + h - ib],
+      ];
+      return [outer, inner];
+    }
+    return [outer];
+  }
+  if (ann.type === "circle") {
+    const outer = openRing(circleRing(ann.points));
+    if (meta?.frame) {
+      const { x, y, w } = bboxToKonva(ann.points);
+      const inset = meta.frameInsets
+        ? Math.min(meta.frameInsets.left, (w - MIN_INSET) / 2)
+        : w * 0.15;
+      const inner = openRing(circleRing([
+        [x + inset, y + inset],
+        [x + w - inset, y + w - inset],
+      ]));
+      return [outer, inner];
+    }
+    return [outer];
+  }
   if (ann.type === "polygon") return [ann.points];
   return [];
 }

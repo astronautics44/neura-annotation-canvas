@@ -28,6 +28,7 @@ import {
   subtractAnnotations,
   toggleHollow,
   type ShapeMeta,
+  type FrameInsets,
 } from "../utils/booleanOps";
 import {
   MIN_ZOOM, MAX_ZOOM, HANDLE_RADIUS, VERTEX_RADIUS, CLOSE_DIST,
@@ -152,7 +153,7 @@ export function AnnotationCanvas({
   const [spaceDown, setSpaceDown] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const [draggingAnnotation, setDraggingAnnotation] = useState<{ id: string; startImg: [number, number] } | null>(null);
-  const [draggingHandle, setDraggingHandle] = useState<{ annId: string; handleIdx: number; startImg: [number, number] } | null>(null);
+  const [draggingHandle, setDraggingHandle] = useState<{ annId: string; handleIdx: number; startImg: [number, number]; isInner?: boolean } | null>(null);
   const [draggingVertex, setDraggingVertex] = useState<{ annId: string; vertIdx: number; startImg: [number, number] } | null>(null);
   /** Drag-box multi-select while the select tool is active. */
   const [marquee, setMarquee] = useState<{ start: [number, number]; cur: [number, number]; additive: boolean } | null>(null);
@@ -346,7 +347,42 @@ export function AnnotationCanvas({
     if (!id) return;
     const ann = annotationsRef.current.find((a) => a.id === id);
     if (!ann || !isAreaAnnotation(ann)) return;
-    dispatchAndNotify({ type: "UPDATE", payload: toggleHollow(ann) });
+    const meta = (ann.meta ?? {}) as ShapeMeta;
+    const isBboxOrCircle = ann.type === "bbox" || ann.type === "circle";
+    
+    let nextHollow = false;
+    let nextFrame = false;
+
+    if (!meta.hollow && !meta.frame) {
+      // Solid -> Hollow
+      nextHollow = true;
+      nextFrame = false;
+    } else if (meta.hollow) {
+      // Hollow -> Frame Fill (if box/circle) otherwise Solid
+      if (isBboxOrCircle) {
+        nextHollow = false;
+        nextFrame = true;
+      } else {
+        nextHollow = false;
+        nextFrame = false;
+      }
+    } else {
+      // Frame Fill -> Solid
+      nextHollow = false;
+      nextFrame = false;
+    }
+
+    dispatchAndNotify({
+      type: "UPDATE",
+      payload: {
+        ...ann,
+        meta: {
+          ...meta,
+          hollow: nextHollow,
+          frame: nextFrame,
+        },
+      },
+    });
   }, [selectedIds, dispatchAndNotify]);
 
   const handleBringForward = useCallback(() => {
@@ -511,6 +547,7 @@ export function AnnotationCanvas({
       setIsPanning(true);
       return;
     }
+    if (e.evt.button !== 0) return; // Only allow left-click for drawing and marquee selection
     if (readonly) return;
 
     const isStageClick = e.target === e.target.getStage() || e.target.name() === "bg-image";
@@ -602,18 +639,85 @@ export function AnnotationCanvas({
     if (draggingHandle) {
       const ann = annotationsRef.current.find((a) => a.id === draggingHandle.annId);
       if (ann) {
-        if (ann.type === "circle") {
+        const META_MIN = 4;
+        if (draggingHandle.isInner) {
+          // Inner frame handle drag: update frameInsets
+          const meta = (ann.meta ?? {}) as ShapeMeta;
+          const { x, y, w, h } = bboxToKonva(ann.points);
+          const defaultInset = ann.type === "circle" ? w * 0.15 : Math.min(w, h) * 0.15;
+          const ins = meta.frameInsets ?? { left: defaultInset, top: defaultInset, right: defaultInset, bottom: defaultInset };
+          const dx = imgPos[0] - draggingHandle.startImg[0];
+          const dy = imgPos[1] - draggingHandle.startImg[1];
+          let { left, top, right, bottom } = ins;
+
+          if (ann.type === "circle") {
+            // For circles: uniform inset driven by how far the handle moves from center
+            const { x: cx2, w: cw } = bboxToKonva(ann.points);
+            const outerCx = cx2 + cw / 2;
+            const dist = Math.hypot(imgPos[0] - outerCx, imgPos[1] - (bboxToKonva(ann.points).y + cw / 2));
+            const newInset = Math.max(META_MIN, cw / 2 - dist);
+            const clamped = Math.min(newInset, (cw - META_MIN) / 2);
+            left = top = right = bottom = clamped;
+          } else {
+            // For bbox: which handle (0=TL,1=T,2=TR,3=R,4=BR,5=B,6=BL,7=L)
+            switch (draggingHandle.handleIdx) {
+              case 0: left = Math.max(META_MIN, left + dx); top = Math.max(META_MIN, top + dy); break;
+              case 1: top = Math.max(META_MIN, top + dy); break;
+              case 2: right = Math.max(META_MIN, right - dx); top = Math.max(META_MIN, top + dy); break;
+              case 3: right = Math.max(META_MIN, right - dx); break;
+              case 4: right = Math.max(META_MIN, right - dx); bottom = Math.max(META_MIN, bottom - dy); break;
+              case 5: bottom = Math.max(META_MIN, bottom - dy); break;
+              case 6: left = Math.max(META_MIN, left + dx); bottom = Math.max(META_MIN, bottom - dy); break;
+              case 7: left = Math.max(META_MIN, left + dx); break;
+            }
+            // Clamp so inner box doesn't collapse
+            left = Math.min(left, (w - META_MIN) / 2);
+            top = Math.min(top, (h - META_MIN) / 2);
+            right = Math.min(right, (w - META_MIN) / 2);
+            bottom = Math.min(bottom, (h - META_MIN) / 2);
+          }
+          dispatchAndNotify({
+            type: "UPDATE",
+            payload: { ...ann, meta: { ...meta, frameInsets: { left, top, right, bottom } } },
+          });
+        } else if (ann.type === "circle") {
           const { x, y, w } = bboxToKonva(ann.points);
           const cx = x + w / 2, cy = y + w / 2;
           const r = Math.max(4, Math.hypot(imgPos[0] - cx, imgPos[1] - cy));
-          dispatchAndNotify({ type: "UPDATE", payload: { ...ann, points: [[cx - r, cy - r], [cx + r, cy + r]] } });
+          // When resizing outer circle, scale the frameInsets proportionally
+          const meta = (ann.meta ?? {}) as ShapeMeta;
+          if (meta.frame && meta.frameInsets) {
+            const oldR = w / 2;
+            const scale2 = r / oldR;
+            const fi = meta.frameInsets;
+            const newInset = Math.max(META_MIN, fi.left * scale2);
+            const clampedInset = Math.min(newInset, (r * 2 - META_MIN) / 2);
+            dispatchAndNotify({ type: "UPDATE", payload: { ...ann, points: [[cx - r, cy - r], [cx + r, cy + r]], meta: { ...meta, frameInsets: { left: clampedInset, top: clampedInset, right: clampedInset, bottom: clampedInset } } } });
+          } else {
+            dispatchAndNotify({ type: "UPDATE", payload: { ...ann, points: [[cx - r, cy - r], [cx + r, cy + r]] } });
+          }
         } else {
           const dx = imgPos[0] - draggingHandle.startImg[0];
           const dy = imgPos[1] - draggingHandle.startImg[1];
           const { x, y, w, h } = bboxToKonva(ann.points);
           const handle = bboxHandles(x, y, w, h)[draggingHandle.handleIdx];
           if (handle) {
-            dispatchAndNotify({ type: "UPDATE", payload: { ...ann, points: handle.resizeFn(dx, dy, ann.points as [[number,number],[number,number]]) } });
+            const newPts = handle.resizeFn(dx, dy, ann.points as [[number,number],[number,number]]);
+            // Scale frameInsets proportionally if frame is active
+            const meta = (ann.meta ?? {}) as ShapeMeta;
+            if (meta.frame && meta.frameInsets) {
+              const newBox = bboxToKonva(newPts as [number, number][]);
+              const fi = meta.frameInsets;
+              const scaleX = newBox.w / w;
+              const scaleY = newBox.h / h;
+              const nl = Math.max(META_MIN, Math.min(fi.left * scaleX, (newBox.w - META_MIN) / 2));
+              const nt = Math.max(META_MIN, Math.min(fi.top * scaleY, (newBox.h - META_MIN) / 2));
+              const nr = Math.max(META_MIN, Math.min(fi.right * scaleX, (newBox.w - META_MIN) / 2));
+              const nb = Math.max(META_MIN, Math.min(fi.bottom * scaleY, (newBox.h - META_MIN) / 2));
+              dispatchAndNotify({ type: "UPDATE", payload: { ...ann, points: newPts as [number,number][], meta: { ...meta, frameInsets: { left: nl, top: nt, right: nr, bottom: nb } } } });
+            } else {
+              dispatchAndNotify({ type: "UPDATE", payload: { ...ann, points: handle.resizeFn(dx, dy, ann.points as [[number,number],[number,number]]) } });
+            }
           }
         }
         setDraggingHandle({ ...draggingHandle, startImg: imgPos });
@@ -704,6 +808,7 @@ export function AnnotationCanvas({
 
   const handleAnnotationMouseDown = useCallback((id: string, e: KonvaEventObject<MouseEvent>) => {
     if (tool !== "select" || readonly || panMode) return;
+    if (e.evt.button !== 0) return; // Only allow left-click to drag or select on mousedown
     e.cancelBubble = true;
 
     // Modifier clicks toggle selection on mouse-up; don't start a drag here.
@@ -827,7 +932,7 @@ export function AnnotationCanvas({
     const isHollowFill = shapeMeta?.hollow === true;
     const fillAlpha = isHollowFill ? 0 : isSelected ? 0.18 : isHovered ? 0.15 : isEngine ? 0.08 : 0.12;
     const rings = getAnnotationRings(ann);
-    const hasHoles = (shapeMeta?.rings?.length ?? 0) > 1;
+    const hasHoles = rings.length > 1;
 
     const renderCompoundArea = (strokeProps: typeof commonProps) => (
       <Shape
@@ -932,10 +1037,42 @@ export function AnnotationCanvas({
 
     if (ann.type === "bbox") {
       const { x, y, w, h } = bboxToKonva(ann.points);
+      // Compute inner ring corners for inner handles
+      const meta2 = shapeMeta;
+      const defaultInset = Math.min(w, h) * 0.15;
+      const ins = meta2?.frameInsets;
+      const il = ins ? Math.min(ins.left, (w - 4) / 2) : defaultInset;
+      const it = ins ? Math.min(ins.top, (h - 4) / 2) : defaultInset;
+      const ir = ins ? Math.min(ins.right, (w - 4) / 2) : defaultInset;
+      const ib = ins ? Math.min(ins.bottom, (h - 4) / 2) : defaultInset;
+      const ix = x + il;
+      const iy = y + it;
+      const iw = w - il - ir;
+      const ih = h - it - ib;
       if (hasHoles) {
         return (
           <Group key={ann.id}>
             {renderCompoundArea(commonProps)}
+            {showHandles && bboxHandles(x, y, w, h).map((handle, i) => (
+              <Circle key={`o${i}`} x={handle.pos[0]} y={handle.pos[1]}
+                radius={HANDLE_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={2 / scale}
+                onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
+                  if (e.evt.button !== 0) return;
+                  e.cancelBubble = true;
+                  setDraggingHandle({ annId: ann.id, handleIdx: i, startImg: getImagePos(e), isInner: false });
+                }}
+              />
+            ))}
+            {showHandles && bboxHandles(ix, iy, iw, ih).map((handle, i) => (
+              <Circle key={`i${i}`} x={handle.pos[0]} y={handle.pos[1]}
+                radius={HANDLE_RADIUS / scale} fill="#fff" stroke={color} strokeWidth={1.5 / scale}
+                onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
+                  if (e.evt.button !== 0) return;
+                  e.cancelBubble = true;
+                  setDraggingHandle({ annId: ann.id, handleIdx: i, startImg: getImagePos(e), isInner: true });
+                }}
+              />
+            ))}
             {chip}
           </Group>
         );
@@ -944,11 +1081,22 @@ export function AnnotationCanvas({
         <Group key={ann.id}>
           <Rect x={x} y={y} width={w} height={h} fill={hexToRgba(color, fillAlpha)} fillEnabled={!isHollowFill} {...commonProps} />
           {showHandles && bboxHandles(x, y, w, h).map((handle, i) => (
-            <Circle key={i} x={handle.pos[0]} y={handle.pos[1]}
+            <Circle key={`o${i}`} x={handle.pos[0]} y={handle.pos[1]}
               radius={HANDLE_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={2 / scale}
               onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
+                if (e.evt.button !== 0) return;
                 e.cancelBubble = true;
-                setDraggingHandle({ annId: ann.id, handleIdx: i, startImg: getImagePos(e) });
+                setDraggingHandle({ annId: ann.id, handleIdx: i, startImg: getImagePos(e), isInner: false });
+              }}
+            />
+          ))}
+          {showHandles && shapeMeta?.frame && bboxHandles(ix, iy, iw, ih).map((handle, i) => (
+            <Circle key={`i${i}`} x={handle.pos[0]} y={handle.pos[1]}
+              radius={HANDLE_RADIUS / scale} fill="#fff" stroke={color} strokeWidth={1.5 / scale}
+              onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
+                if (e.evt.button !== 0) return;
+                e.cancelBubble = true;
+                setDraggingHandle({ annId: ann.id, handleIdx: i, startImg: getImagePos(e), isInner: true });
               }}
             />
           ))}
@@ -960,10 +1108,39 @@ export function AnnotationCanvas({
     if (ann.type === "circle") {
       const { x, y, w } = bboxToKonva(ann.points);
       const cx = x + w / 2, cy = y + w / 2, r = w / 2;
+      // Compute inner circle radius for inner handles
+      const meta2 = shapeMeta;
+      const defaultInset = w * 0.15;
+      const inset = meta2?.frameInsets ? Math.min(meta2.frameInsets.left, (w - 4) / 2) : defaultInset;
+      const innerR = r - inset;
       if (hasHoles) {
         return (
           <Group key={ann.id}>
             {renderCompoundArea(commonProps)}
+            {showHandles && ([
+              [cx, cy - r], [cx + r, cy], [cx, cy + r], [cx - r, cy],
+            ] as [number, number][]).map(([hx, hy], i) => (
+              <Circle key={`o${i}`} x={hx} y={hy}
+                radius={HANDLE_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={2 / scale}
+                onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
+                  if (e.evt.button !== 0) return;
+                  e.cancelBubble = true;
+                  setDraggingHandle({ annId: ann.id, handleIdx: i, startImg: getImagePos(e), isInner: false });
+                }}
+              />
+            ))}
+            {showHandles && ([
+              [cx, cy - innerR], [cx + innerR, cy], [cx, cy + innerR], [cx - innerR, cy],
+            ] as [number, number][]).map(([hx, hy], i) => (
+              <Circle key={`i${i}`} x={hx} y={hy}
+                radius={HANDLE_RADIUS / scale} fill="#fff" stroke={color} strokeWidth={1.5 / scale}
+                onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
+                  if (e.evt.button !== 0) return;
+                  e.cancelBubble = true;
+                  setDraggingHandle({ annId: ann.id, handleIdx: i, startImg: getImagePos(e), isInner: true });
+                }}
+              />
+            ))}
             {chip}
           </Group>
         );
@@ -974,11 +1151,24 @@ export function AnnotationCanvas({
           {showHandles && ([
             [cx, cy - r], [cx + r, cy], [cx, cy + r], [cx - r, cy],
           ] as [number, number][]).map(([hx, hy], i) => (
-            <Circle key={i} x={hx} y={hy}
+            <Circle key={`o${i}`} x={hx} y={hy}
               radius={HANDLE_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={2 / scale}
               onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
+                if (e.evt.button !== 0) return;
                 e.cancelBubble = true;
-                setDraggingHandle({ annId: ann.id, handleIdx: i, startImg: getImagePos(e) });
+                setDraggingHandle({ annId: ann.id, handleIdx: i, startImg: getImagePos(e), isInner: false });
+              }}
+            />
+          ))}
+          {showHandles && shapeMeta?.frame && ([
+            [cx, cy - innerR], [cx + innerR, cy], [cx, cy + innerR], [cx - innerR, cy],
+          ] as [number, number][]).map(([hx, hy], i) => (
+            <Circle key={`i${i}`} x={hx} y={hy}
+              radius={HANDLE_RADIUS / scale} fill="#fff" stroke={color} strokeWidth={1.5 / scale}
+              onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
+                if (e.evt.button !== 0) return;
+                e.cancelBubble = true;
+                setDraggingHandle({ annId: ann.id, handleIdx: i, startImg: getImagePos(e), isInner: true });
               }}
             />
           ))}
@@ -995,6 +1185,7 @@ export function AnnotationCanvas({
             {showHandles && rings[0]?.map(([x, y], i) => (
               <Circle key={i} x={x} y={y} radius={VERTEX_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={1.5 / scale}
                 onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
+                  if (e.evt.button !== 0) return;
                   e.cancelBubble = true;
                   setDraggingVertex({ annId: ann.id, vertIdx: i, startImg: getImagePos(e) });
                 }}
@@ -1010,6 +1201,7 @@ export function AnnotationCanvas({
           {showHandles && ann.points.map(([x, y], i) => (
             <Circle key={i} x={x} y={y} radius={VERTEX_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={1.5 / scale}
               onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
+                if (e.evt.button !== 0) return;
                 e.cancelBubble = true;
                 setDraggingVertex({ annId: ann.id, vertIdx: i, startImg: getImagePos(e) });
               }}
@@ -1027,6 +1219,7 @@ export function AnnotationCanvas({
           {showHandles && ann.points.map(([x, y], i) => (
             <Circle key={i} x={x} y={y} radius={HANDLE_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={2 / scale}
               onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
+                if (e.evt.button !== 0) return;
                 e.cancelBubble = true;
                 setDraggingVertex({ annId: ann.id, vertIdx: i, startImg: getImagePos(e) });
               }}
@@ -1148,6 +1341,7 @@ export function AnnotationCanvas({
     .filter((a): a is CanonicalAnnotation => a != null && isAreaAnnotation(a)).length;
   const singleSelected = selectedIds.length === 1 ? annotations.find((a) => a.id === selectedIds[0]) : undefined;
   const singleIsHollow = (singleSelected?.meta as ShapeMeta | undefined)?.hollow === true;
+  const singleIsFrame = (singleSelected?.meta as ShapeMeta | undefined)?.frame === true;
 
   const cssVars = themeToCssVars(resolved) as React.CSSProperties;
 
@@ -1176,6 +1370,8 @@ export function AnnotationCanvas({
               canLayer={selectedIds.length === 1}
               readonly={readonly}
               isHollow={singleIsHollow}
+              isFrame={singleIsFrame}
+              allowFrame={singleSelected != null && (singleSelected.type === "bbox" || singleSelected.type === "circle")}
               onMerge={handleMerge}
               onSubtract={handleSubtract}
               onIntersect={handleIntersect}
@@ -1197,6 +1393,7 @@ export function AnnotationCanvas({
             onMouseMove={handleStageMouseMove as (e: KonvaEventObject<Event>) => void}
             onMouseUp={handleStageMouseUp as (e: KonvaEventObject<Event>) => void}
             onWheel={handleWheel}
+            onContextMenu={(e: KonvaEventObject<PointerEvent>) => e.evt.preventDefault()}
             listening={true}
           >
             <Layer>

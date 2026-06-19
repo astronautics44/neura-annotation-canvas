@@ -15,6 +15,8 @@ interface Props {
   onBringForward: () => void;
   onSendBackward: () => void;
   isHollow: boolean;
+  isFrame: boolean;
+  allowFrame: boolean;
 }
 
 function OpButton({
@@ -64,6 +66,8 @@ export function ShapeOpsBar({
   onBringForward,
   onSendBackward,
   isHollow,
+  isFrame,
+  allowFrame,
 }: Props) {
   if (count === 0) return null;
 
@@ -99,14 +103,25 @@ export function ShapeOpsBar({
         </>
       )}
 
-      {count === 1 && (
-        <OpButton
-          label={isHollow ? "Fill on" : "Hollow"}
-          title="Toggle fill — stroke-only outline (Ctrl+Shift+O)"
-          disabled={readonly || areaCount !== 1}
-          onClick={onToggleFill}
-        />
-      )}
+      {count === 1 && (() => {
+        let label = "Hollow";
+        let title = "Set to Hollow (transparent fill, outline only) (Ctrl+Shift+O)";
+        if (isHollow) {
+          label = allowFrame ? "Frame Fill" : "Fill on";
+          title = allowFrame ? "Set to Frame Fill (border filled, center empty) (Ctrl+Shift+O)" : "Set to Solid Fill (Ctrl+Shift+O)";
+        } else if (isFrame) {
+          label = "Fill on";
+          title = "Set to Solid Fill (Ctrl+Shift+O)";
+        }
+        return (
+          <OpButton
+            label={label}
+            title={title}
+            disabled={readonly || areaCount !== 1}
+            onClick={onToggleFill}
+          />
+        );
+      })()}
 
       {canLayer && (
         <>
