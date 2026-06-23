@@ -152,7 +152,7 @@ export default function ReviewPage() {
 interface AnnotationCanvasProps {
   // Required
   image: string; // URL or base64 data URL
-  labels: LabelMap[]; // full label registry for this client
+  labels: LabelMap[]; // full label registry; use symbolSize per label for manual size form
 
   // Data
   annotations?: CanonicalAnnotation[]; // pre-adapted engine output, loaded on mount
@@ -233,7 +233,16 @@ export interface CanonicalAnnotation {
   label: string; // canonicalClassId, e.g. "door"
   confidence?: number; // 0–1. undefined = human-created annotation
   source: "engine" | "human"; // engine = from CV output; human = added/modified by reviewer
-  meta?: Record<string, unknown>; // passthrough, not used by the package
+  meta?: Record<string, unknown>; // passthrough; package reads meta.symbolSize for display
+}
+
+export type SymbolSizeUnit = "mm" | "cm" | "m" | "in" | "ft";
+
+/** Manual real-world size stored in annotation.meta.symbolSize */
+export interface SymbolSize {
+  attribute: string; // e.g. "diameter", "thickness"
+  value: number;
+  unit: SymbolSizeUnit;
 }
 
 export interface LabelMap {
@@ -241,6 +250,8 @@ export interface LabelMap {
   displayName: string; // shown in UI, e.g. "Door"
   color: string; // hex, e.g. "#FF6B6B"
   defaultTool?: AnnotationType; // auto-selects this tool when label is picked
+  symbolSize?: "optional" | "required"; // show manual size form in label popover
+  symbolSizeAttributes?: string[]; // attribute dropdown options for this label
 }
 ```
 
@@ -549,13 +560,14 @@ All three toggles default to `true`. Set any to `false` to hide the feature from
 
 ### Label selector popover
 
-Appears after completing a draw gesture. Supports:
+Appears after completing a draw gesture (or when relabeling). Supports:
 
 - Typing to search/filter labels
 - Arrow keys to navigate
 - `Enter` to select, `Escape` to cancel (discards the annotation)
-- If only one label exists, it is auto-selected — no popover shown
+- If only one label exists and it has no `symbolSize` config, it is auto-selected — no popover shown
 - If the typed name doesn't match any label, a **Create "..."** row appears (disabled in `readonly` mode)
+- When the selected label has `symbolSize: "optional" | "required"`, a second step collects **Attribute**, **Value**, and **Unit** (see [Symbol size](#symbol-size-manual-takeoff-dimensions))
 
 ---
 
@@ -567,6 +579,7 @@ Shows all annotations grouped by label. Features:
 - Click a group header to collapse/expand
 - Hover a row to reveal relabel (✎) and delete (✕) actions
 - Each annotation shows an `H` badge (human-created) or `AI` badge (engine output)
+- When `meta.symbolSize` is set, the row shows the manual dimension (e.g. `diameter 12mm`)
 
 ---
 
@@ -595,13 +608,67 @@ Annotations render differently based on state and source:
 
 Selected annotations show resize handles (bboxes: 8 handles at corners + edge midpoints; polygons: handles at every vertex; lines: handles at endpoints; circles: 4 cardinal handles — dragging any handle adjusts the radius while keeping the circle perfectly round).
 
-Label chips (color dot + display name + confidence %) are rendered at each annotation. They are hidden when zoom drops below 30%.
+Label chips (color dot + display name + confidence % + optional symbol size) are rendered at each annotation. They are hidden when zoom drops below 30%.
+
+When `meta.symbolSize` is set, the chip also shows the manual dimension (e.g. `Pipe diameter 12mm`). This is independent of drawing-scale geometry.
+
+---
+
+## Symbol size (manual takeoff dimensions)
+
+Symbol size lets reviewers type a real-world dimension when assigning or updating a label — pipe diameter, wall thickness, etc. It is **independent of drawing scale**. Drawing scale converts pixel geometry globally; symbol size is a per-annotation value the user enters manually.
+
+### Label registry
+
+Configure which labels show the size form:
+
+```typescript
+{
+  canonicalClassId: "pipe",
+  displayName: "Pipe",
+  color: "#C9A0FF",
+  defaultTool: "line",
+  symbolSize: "required",                                     // or "optional"
+  symbolSizeAttributes: ["diameter", "thickness", "radius"],  // optional override
+}
+```
+
+| `symbolSize` | Behavior |
+| ------------ | -------- |
+| omitted      | No size form — label commits immediately |
+| `"optional"` | Size form with **Skip** button |
+| `"required"` | Size form — all three fields required |
+
+Default attribute options (when `symbolSizeAttributes` is omitted): `diameter`, `thickness`, `width`, `height`, `depth`, `length`, `radius`, `gauge`. Users can also choose **Custom…** and type any name.
+
+### Stored on the annotation
+
+```typescript
+import type { SymbolSize } from "@astronautics44/neura-annotation-canvas";
+
+// annotation.meta.symbolSize
+{ attribute: "diameter", value: 12, unit: "mm" }
+```
+
+Round-trips through `onSave` / `onChange`. CV engine output typically omits this — reviewers add it during review.
+
+### Backend contract
+
+| Direction | What to provide / persist |
+| --------- | ------------------------- |
+| Load labels | `symbolSize` and optional `symbolSizeAttributes` per label |
+| Load annotations | `meta.symbolSize` when previously saved |
+| Save annotations | Full `CanonicalAnnotation[]` including `meta.symbolSize` |
+
+Optional validation: reject annotations missing `meta.symbolSize` when their label has `symbolSize: "required"`.
 
 ---
 
 ## Drawing scale
 
-When a drawing scale and scanner DPI are provided, every annotation chip shows real-world dimensions alongside the label. Users can also correct a wrong CV-extracted scale directly in the status bar.
+When a drawing scale and scanner DPI are provided, every annotation chip shows real-world dimensions alongside the label (computed from pixel geometry). Users can also correct a wrong CV-extracted scale directly in the status bar.
+
+> **Not the same as [symbol size](#symbol-size-manual-takeoff-dimensions).** Symbol size is a manual value the user types per annotation when labeling.
 
 ### How it works
 
@@ -709,7 +776,7 @@ The package does not do this itself — SSR gating is the consumer's responsibil
 // package/src/index.ts
 
 export { AnnotationCanvas };                              // the main component
-export type { CanonicalAnnotation, LabelMap, ToolType }; // canonical types
+export type { CanonicalAnnotation, LabelMap, SymbolSize, SymbolSizeUnit, ToolType }; // canonical types
 export type { DrawingScale };                             // drawing scale type (dpi + scale props)
 export type { ThemeVars };                                // theme token interface
 export { DEFAULT_THEME };                                 // the default dark palette, useful as a base
@@ -730,7 +797,7 @@ These are constraints, not suggestions.
 
 3. **All `points` values are image pixel coordinates.** Convert on the way in (engine coords → image px) and the package handles screen↔image transforms internally.
 
-4. **`meta` is a passthrough.** The package stores it and returns it in `onSave`, but never reads or interprets it. Use it to carry any engine-specific fields you need downstream.
+4. **`meta` is mostly passthrough.** The package stores it and returns it in `onSave`. The one exception is `meta.symbolSize`, which the package reads to display manual dimensions on chips and in the label panel. Use `meta` for any other engine-specific fields you need downstream.
 
 5. **Do not modify `canonical.ts`.** It is the shared contract between the package and all client webapps. Changes there break every existing adapter.
 
@@ -772,6 +839,15 @@ export const labelRegistry: LabelMap[] = [
     displayName: "Column",
     color: "#B8B8FF",
     defaultTool: "point",
+    symbolSize: "optional",
+  },
+  {
+    canonicalClassId: "pipe",
+    displayName: "Pipe",
+    color: "#C9A0FF",
+    defaultTool: "line",
+    symbolSize: "required",
+    symbolSizeAttributes: ["diameter", "thickness", "radius"],
   },
   {
     canonicalClassId: "stair",

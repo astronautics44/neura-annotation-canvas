@@ -194,9 +194,20 @@ export const labelRegistry: LabelMap[] = [
     displayName: "Column",
     color: "#B8B8FF",
     defaultTool: "point",
+    symbolSize: "optional",
+  },
+  {
+    canonicalClassId: "pipe",
+    displayName: "Pipe",
+    color: "#C9A0FF",
+    defaultTool: "line",
+    symbolSize: "required",
+    symbolSizeAttributes: ["diameter", "thickness", "radius"],
   },
 ];
 ```
+
+`symbolSize` and `symbolSizeAttributes` are optional — see [section 9](#9-symbol-size-manual-takeoff-dimensions) for details.
 
 ## 4. Convert Your Data to the Canonical Format
 
@@ -433,9 +444,151 @@ To show every tool, either omit `tools` entirely or pass the full list explicitl
 
 > **Note:** Keyboard shortcuts only activate tools that are in your `tools` array. If `line` is not listed, pressing `L` will not switch to the line tool.
 
-## 9. Drawing Scale (Real-World Dimensions)
+## 9. Symbol Size (Manual Takeoff Dimensions)
+
+Symbol size lets reviewers enter a **manual real-world dimension** when assigning or updating a label — for example, pipe diameter or wall thickness. This is **independent of drawing scale** (section 10). Drawing scale converts pixel geometry to real units globally; symbol size is a user-typed value stored per annotation.
+
+### When the UI appears
+
+The label popover shows an extra step (attribute + value + unit) only when the selected label has `symbolSize` set in your label registry:
+
+| `symbolSize` value | Behavior |
+| ------------------ | -------- |
+| omitted            | Label is picked immediately — no size form |
+| `"optional"`       | Size form appears with a **Skip** button |
+| `"required"`       | Size form appears — user must fill all fields before confirming |
+
+Not every project needs this. Not every label in a project needs it. Configure it per label in `LabelMap`.
+
+### Label registry fields
+
+```typescript
+import type { LabelMap } from "@astronautics44/neura-annotation-canvas";
+
+{
+  canonicalClassId: "pipe",
+  displayName: "Pipe",
+  color: "#C9A0FF",
+  defaultTool: "line",
+  symbolSize: "required",                                      // "optional" | "required"
+  symbolSizeAttributes: ["diameter", "thickness", "radius"],   // optional — overrides defaults
+}
+```
+
+| Field | Required? | Description |
+| ----- | --------- | ----------- |
+| `symbolSize` | No | `"optional"` or `"required"`. Omit to disable the size form for this label. |
+| `symbolSizeAttributes` | No | Dropdown options for the **Attribute** field. Omit to use package defaults: `diameter`, `thickness`, `width`, `height`, `depth`, `length`, `radius`, `gauge`. Users can also pick **Custom…** and type any attribute name. |
+
+### Stored on the annotation
+
+Symbol size is saved in `annotation.meta.symbolSize`:
+
+```typescript
+import type { SymbolSize, SymbolSizeUnit } from "@astronautics44/neura-annotation-canvas";
+
+interface SymbolSize {
+  attribute: string;   // e.g. "diameter", "thickness"
+  value: number;       // e.g. 12
+  unit: SymbolSizeUnit; // "mm" | "cm" | "m" | "in" | "ft"
+}
+```
+
+Example annotation after the user draws a line and labels it "Pipe":
+
+```json
+{
+  "id": "abc123",
+  "type": "line",
+  "points": [[120, 200], [400, 200]],
+  "label": "pipe",
+  "source": "human",
+  "meta": {
+    "symbolSize": {
+      "attribute": "diameter",
+      "value": 12,
+      "unit": "mm"
+    }
+  }
+}
+```
+
+The package displays this on annotation chips (e.g. `Pipe diameter 12mm`) and in the label panel. It round-trips through `onSave` / `onChange` inside the full `CanonicalAnnotation[]` payload.
+
+### What the user sees
+
+1. User finishes drawing and the label popover opens.
+2. User picks a label that has `symbolSize` configured.
+3. A second step appears with three fields:
+   - **Attribute** — select (with optional custom text)
+   - **Value** — number input
+   - **Unit** — select (`mm`, `cm`, `m`, `in`, `ft`)
+4. User clicks **Confirm** (or **Skip** when optional).
+5. On relabel (panel ✎ icon or double-click), the form pre-fills from any existing `meta.symbolSize`.
+
+### Backend contract
+
+The package does not call your API. Your webapp and backend own persistence.
+
+**On load — provide:**
+
+1. **Label registry** with `symbolSize` / `symbolSizeAttributes` per label (project config).
+2. **Annotations** in canonical form, including `meta.symbolSize` when previously saved.
+
+CV engine output typically will **not** include symbol size — reviewers add it during review. Omit `meta.symbolSize` for engine detections.
+
+**On save — accept:**
+
+`onSave` returns the full `CanonicalAnnotation[]`. Persist `meta.symbolSize` per annotation (as JSON or mapped to your own columns). Return it unchanged on the next load so the UI pre-fills correctly.
+
+**Optional server-side validation:**
+
+- If a label has `symbolSize: "required"`, reject saves where that annotation is missing `meta.symbolSize`.
+- Validate `value > 0` and `unit` is one of the allowed values.
+
+### Adapter example
+
+Map your engine/backend format in the client webapp adapter — not in the package:
+
+```typescript
+import type { CanonicalAnnotation, SymbolSize } from "@astronautics44/neura-annotation-canvas";
+
+type BackendAnnotation = {
+  id: string;
+  class_id: string;
+  geometry: { type: "line"; points: [number, number][] };
+  symbol_size?: { name: string; value: number; unit: string } | null;
+};
+
+export function adaptFromBackend(raw: BackendAnnotation): CanonicalAnnotation {
+  return {
+    id: raw.id,
+    type: "line",
+    points: raw.geometry.points,
+    label: raw.class_id,
+    source: "human",
+    meta: raw.symbol_size
+      ? {
+          symbolSize: {
+            attribute: raw.symbol_size.name,
+            value: raw.symbol_size.value,
+            unit: raw.symbol_size.unit as SymbolSize["unit"],
+          },
+        }
+      : undefined,
+  };
+}
+```
+
+### User-created labels
+
+If users create labels from the popover (`onLabelsChange`), new labels will **not** have `symbolSize` unless your backend assigns it when persisting the expanded registry.
+
+## 10. Drawing Scale (Real-World Dimensions)
 
 Drawing scale is **optional**. Without it, annotations work normally — you just will not see real-world sizes on annotation chips or a scale control in the status bar.
+
+> **Not the same as symbol size (section 9).** Drawing scale converts pixel geometry using sheet scale + DPI. Symbol size is a manual per-annotation value the user types when labeling.
 
 This is different from **zoom** (`Zoom: 100%` in the status bar). Zoom only changes how large the image appears on screen. Drawing scale converts pixel measurements into real-world units (mm, m, in, ft) for quantity takeoff.
 
@@ -542,7 +695,7 @@ function ReviewPage() {
 }
 ```
 
-## 10. Read-Only Mode
+## 11. Read-Only Mode
 
 Use `readonly` when users should view annotations but not edit them:
 
@@ -558,7 +711,7 @@ Use `readonly` when users should view annotations but not edit them:
 
 In read-only mode, drawing tools are disabled, the scale edit button is hidden, and users cannot create or modify annotations. Zoom and pan still work.
 
-## 11. Optional Feature Toggles
+## 12. Optional Feature Toggles
 
 These props all default to `true`. Set any to `false` to hide UI chrome for a minimal embed:
 
@@ -586,7 +739,7 @@ Example — view-only embed with minimal UI:
 />
 ```
 
-## 12. GitHub Actions Install Example
+## 13. GitHub Actions Install Example
 
 In a private consumer repo, configure package auth before `npm ci`:
 
