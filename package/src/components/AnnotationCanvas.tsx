@@ -11,10 +11,11 @@ import type { KonvaEventObject } from "konva/lib/Node";
 import type { Stage as StageType } from "konva/lib/Stage";
 import { Stage, Layer, Image as KonvaImage, Rect, Line, Circle, Ellipse, Group, Text, Shape } from "react-konva";
 import useImage from "use-image";
-import type { CanonicalAnnotation, LabelMap, ToolType } from "../types/canonical";
+import type { CanonicalAnnotation, LabelMap, SymbolSize, ToolType } from "../types/canonical";
 import type { ThemeVars } from "../theme";
 import { resolveTheme, themeToCssVars } from "../theme";
 import { newId } from "../utils/ids";
+import { formatSymbolSize, parseSymbolSize } from "../utils/symbolSize";
 import { Toolbar } from "./Toolbar";
 import { LabelPanel } from "./LabelPanel";
 import { LabelPopover } from "./LabelPopover";
@@ -730,22 +731,42 @@ export function AnnotationCanvas({
     setDraggingAnnotation({ id, startImg: getImagePos(e) });
   }, [tool, readonly, panMode, getImagePos, selectedIds, cloneAnnotations, snapshot]);
 
-  const handleLabelSelect = useCallback((label: string) => {
+  const handleLabelSelect = useCallback((label: string, symbolSize?: SymbolSize) => {
+    const meta = symbolSize ? { symbolSize } : undefined;
+    const base = { label, source: "human" as const, ...(meta ? { meta } : {}) };
     if (draw.phase === "bbox-pending") {
-      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "bbox", points: draw.points, label, source: "human" } });
+      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "bbox", points: draw.points, ...base } });
     } else if (draw.phase === "polygon-pending") {
-      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "polygon", points: draw.pts, label, source: "human" } });
+      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "polygon", points: draw.pts, ...base } });
     } else if (draw.phase === "polyline-pending") {
-      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "polyline", points: draw.pts, label, source: "human" } });
+      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "polyline", points: draw.pts, ...base } });
     } else if (draw.phase === "line-pending") {
-      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "line", points: draw.points, label, source: "human" } });
+      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "line", points: draw.points, ...base } });
     } else if (draw.phase === "point-pending") {
-      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "point", points: [draw.pt], label, source: "human" } });
+      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "point", points: [draw.pt], ...base } });
     } else if (draw.phase === "circle-pending") {
-      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "circle", points: draw.points, label, source: "human" } });
+      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "circle", points: draw.points, ...base } });
     }
     setDraw({ phase: "idle" });
   }, [draw, dispatchAndNotify]);
+
+  const applyRelabel = useCallback((annId: string, label: string, symbolSize?: SymbolSize) => {
+    const ann = annotations.find((a) => a.id === annId);
+    if (!ann) return;
+    const nextMeta = { ...ann.meta };
+    if (symbolSize) nextMeta.symbolSize = symbolSize;
+    else delete nextMeta.symbolSize;
+    const hasMeta = Object.keys(nextMeta).length > 0;
+    const { meta: _prevMeta, ...rest } = ann;
+    dispatchAndNotify({
+      type: "UPDATE",
+      payload: {
+        ...rest,
+        label,
+        ...(hasMeta ? { meta: nextMeta } : {}),
+      },
+    });
+  }, [annotations, dispatchAndNotify]);
 
   const handlePopoverCancel = useCallback(() => setDraw({ phase: "idle" }), []);
 
@@ -893,6 +914,8 @@ export function AnnotationCanvas({
 
     const chipLabel = lm?.displayName ?? ann.label;
     const chipConf = ann.confidence !== undefined ? ` ${Math.round(ann.confidence * 100)}%` : "";
+    const symbolSize = parseSymbolSize(ann.meta);
+    const chipSymbolSize = symbolSize ? ` ${formatSymbolSize(symbolSize)}` : "";
 
     // Real-world dimensions appended to chip when scale is configured
     let chipDim = "";
@@ -918,7 +941,7 @@ export function AnnotationCanvas({
       }
     }
 
-    const chipText = chipLabel + chipConf + chipDim;
+    const chipText = chipLabel + chipConf + chipSymbolSize + chipDim;
     // 8px per char is a safe overestimate for mixed system-ui + monospace content
     const chipWidth = chipText.length * 8 / scale + 12 / scale;
 
@@ -1227,19 +1250,23 @@ export function AnnotationCanvas({
               onCreateLabel={readonly ? undefined : handleCreateLabel}
             />
           )}
-          {relabelPos && !pPos && (
-            <LabelPopover
-              labels={labels}
-              position={relabelPos}
-              onSelect={(label) => {
-                const ann = annotations.find((a) => a.id === relabelId);
-                if (ann) dispatchAndNotify({ type: "UPDATE", payload: { ...ann, label } });
-                setRelabelId(null);
-              }}
-              onCancel={() => setRelabelId(null)}
-              onCreateLabel={readonly ? undefined : handleCreateLabel}
-            />
-          )}
+          {relabelPos && !pPos && (() => {
+            const relabelAnn = annotations.find((a) => a.id === relabelId);
+            const initialSize = parseSymbolSize(relabelAnn?.meta);
+            return (
+              <LabelPopover
+                labels={labels}
+                position={relabelPos}
+                {...(initialSize ? { initialSymbolSize: initialSize } : {})}
+                onSelect={(label, symbolSize) => {
+                  if (relabelId) applyRelabel(relabelId, label, symbolSize);
+                  setRelabelId(null);
+                }}
+                onCancel={() => setRelabelId(null)}
+                onCreateLabel={readonly ? undefined : handleCreateLabel}
+              />
+            );
+          })()}
         </div>
         <LabelPanel
           annotations={annotations}
@@ -1279,10 +1306,7 @@ export function AnnotationCanvas({
             }
             setSelectedIds([]);
           }}
-          onRelabel={(id, label) => {
-            const ann = annotations.find((a) => a.id === id);
-            if (ann) dispatchAndNotify({ type: "UPDATE", payload: { ...ann, label } });
-          }}
+          onRelabel={(id, label, symbolSize) => applyRelabel(id, label, symbolSize)}
         />
       </div>
 

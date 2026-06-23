@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
-import type { CanonicalAnnotation, LabelMap } from "../types/canonical";
+import type { CanonicalAnnotation, LabelMap, SymbolSize } from "../types/canonical";
 import { LabelPopover } from "./LabelPopover";
+import { formatSymbolSize, parseSymbolSize } from "../utils/symbolSize";
 
 interface Props {
   annotations: CanonicalAnnotation[];
@@ -11,7 +12,7 @@ interface Props {
   onSelect: (id: string, additive: boolean) => void;
   onDelete: (id: string) => void;
   onDeleteSelected?: () => void;
-  onRelabel: (id: string, label: string) => void;
+  onRelabel: (id: string, label: string, symbolSize?: SymbolSize) => void;
   onCreateLabel?: ((displayName: string) => string) | undefined;
   readonly?: boolean;
   width?: number;
@@ -334,6 +335,7 @@ export function LabelPanel({
                 items.map((ann) => {
                   const isSelected = selectedIds.includes(ann.id);
                   const isHovered = hoveredRow === ann.id;
+                  const symbolSize = parseSymbolSize(ann.meta);
                   return (
                     <div
                       key={ann.id}
@@ -390,6 +392,24 @@ export function LabelPanel({
                       >
                         {ann.type}
                       </span>
+
+                      {symbolSize && (
+                        <span
+                          title={formatSymbolSize(symbolSize)}
+                          style={{
+                            fontSize: 9,
+                            color: "var(--ae-text-secondary)",
+                            fontFamily: "'JetBrains Mono','Fira Code',monospace",
+                            flexShrink: 0,
+                            maxWidth: 72,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {formatSymbolSize(symbolSize)}
+                        </span>
+                      )}
 
                       {/* Source badge */}
                       <span
@@ -511,18 +531,23 @@ export function LabelPanel({
         <div style={{ height: 8 }} />
       </div>
 
-      {relabelTarget && (
-        <LabelPopover
-          labels={labels}
-          position={relabelTarget.pos}
-          onSelect={(label) => {
-            onRelabel(relabelTarget.id, label);
-            setRelabelTarget(null);
-          }}
-          onCancel={() => setRelabelTarget(null)}
-          onCreateLabel={onCreateLabel}
-        />
-      )}
+      {relabelTarget && (() => {
+        const relabelAnn = annotations.find((a) => a.id === relabelTarget.id);
+        const initialSize = parseSymbolSize(relabelAnn?.meta);
+        return (
+          <LabelPopover
+            labels={labels}
+            position={relabelTarget.pos}
+            {...(initialSize ? { initialSymbolSize: initialSize } : {})}
+            onSelect={(label, symbolSize) => {
+              onRelabel(relabelTarget.id, label, symbolSize);
+              setRelabelTarget(null);
+            }}
+            onCancel={() => setRelabelTarget(null)}
+            onCreateLabel={onCreateLabel}
+          />
+        );
+      })()}
     </div>
   );
 }

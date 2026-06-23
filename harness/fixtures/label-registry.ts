@@ -5,6 +5,7 @@ export const labelRegistry: LabelMap[] = [
   { canonicalClassId: "window", displayName: "Window", color: "#4ECDC4", defaultTool: "bbox" },
   { canonicalClassId: "wall", displayName: "Wall", color: "#FFE66D", defaultTool: "polygon" },
   { canonicalClassId: "room", displayName: "Room", color: "#A8E6CF", defaultTool: "polygon" },
-  { canonicalClassId: "column", displayName: "Column", color: "#B8B8FF", defaultTool: "point" },
+  { canonicalClassId: "column", displayName: "Column", color: "#B8B8FF", defaultTool: "point", symbolSize: "optional" },
+  { canonicalClassId: "pipe", displayName: "Pipe", color: "#C9A0FF", defaultTool: "line", symbolSize: "required", symbolSizeAttributes: ["diameter", "thickness", "radius"] },
   { canonicalClassId: "stair", displayName: "Stair", color: "#FF9A9E", defaultTool: "polygon" },
 ];
