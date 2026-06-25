@@ -25,7 +25,9 @@ const AnnotationCanvas = dynamic(
   { ssr: false },
 );
 
-const FLOOR_PLAN_URL = "/construction_drawing.png";
+// Page 5 (sheet A-200A "ADMIN ELEVATIONS") of the HVAC CD set,
+// rendered at 300 DPI -> 10800 x 7200 px (36" x 24" ARCH-D sheet).
+const FLOOR_PLAN_URL = "/admin-elevations-p5.png";
 
 // Light / white theme for the harness
 const lightTheme: Partial<ThemeVars> = {
@@ -49,9 +51,13 @@ const lightTheme: Partial<ThemeVars> = {
 // Preset scales for the demo — covers metric and imperial conventions
 const SCALE_PRESETS: { label: string; scale: DrawingScale; dpi: number }[] = [
   { label: "None", scale: { value: 1, unit: "mm", label: "—" }, dpi: 0 },
+  // Page 5 / A-200A. Title block reads 1/8"=1'-0" -> 1 inch = 8 feet.
+  // (The graphic scale bar on the sheet is drawn 2x oversize and is NOT trustworthy.)
+  { label: 'A-200A  1"=8\' (title block) @ 300 DPI', scale: { value: 8, unit: "ft", label: '1"=8\'' }, dpi: 300 },
+  // Measured from the building datum lines (134'->150' = 16 ft over 545 px): ~1"=8.8'.
+  { label: 'A-200A  1"=8.8\' (measured) @ 300 DPI', scale: { value: 8.8, unit: "ft", label: '1"=8.8\'' }, dpi: 300 },
   { label: "1:100 @ 300 DPI", scale: { value: 100, unit: "mm", label: "1:100" }, dpi: 300 },
   { label: "1:50 @ 300 DPI",  scale: { value: 50,  unit: "mm", label: "1:50"  }, dpi: 300 },
-  { label: '1/4"=1\' @ 300 DPI', scale: { value: 48, unit: "in", label: '1/4"=1\'' }, dpi: 300 },
 ];
 
 type Engine = "A" | "B" | "C" | "D";
@@ -72,7 +78,7 @@ function getAnnotations(engine: Engine): CanonicalAnnotation[] {
 export default function Page() {
   const [engine, setEngine] = useState<Engine>("A");
   const [labels, setLabels] = useState(labelRegistry);
-  const [scalePreset, setScalePreset] = useState(0); // index into SCALE_PRESETS
+  const [scalePreset, setScalePreset] = useState(1); // index into SCALE_PRESETS (default: A-200A 1"=8')
   const activePreset = SCALE_PRESETS[scalePreset]!;
   const annotations = getAnnotations(engine);
 

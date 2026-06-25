@@ -757,11 +757,9 @@ export function AnnotationCanvas({
     const usedColors = new Set(labels.map((l) => l.color));
     const color = AUTO_COLORS.find((c) => !usedColors.has(c)) ?? AUTO_COLORS[labels.length % AUTO_COLORS.length]!;
     const newLabel: LabelMap = { canonicalClassId: id, displayName, color };
-    setLabels((prev) => {
-      const next = [...prev, newLabel];
-      onLabelsChange?.(next);
-      return next;
-    });
+    const next = [...labels, newLabel];
+    setLabels(next);
+    onLabelsChange?.(next);
     return id;
   }, [labels, onLabelsChange]);
 
