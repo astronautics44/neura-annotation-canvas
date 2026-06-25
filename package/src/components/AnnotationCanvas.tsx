@@ -228,8 +228,11 @@ export function AnnotationCanvas({
   }, [snapshot]);
 
   useEffect(() => {
+    // Suppress during active drag — mouseUp fires onChange once at gesture end
+    if (draggingAnnotation !== null || draggingHandle !== null || draggingVertex !== null) return;
     onChange?.(annotations);
-  }, [annotations]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [annotations, draggingAnnotation, draggingHandle, draggingVertex]);
 
   useEffect(() => {
     // Skip reloading when the incoming prop is the very array this component
@@ -1329,8 +1332,10 @@ export function AnnotationCanvas({
             onWheel={handleWheel}
             listening={true}
           >
-            <Layer>
+            <Layer listening={false}>
               {img && <KonvaImage image={img} x={0} y={0} width={img.width} height={img.height} name="bg-image" />}
+            </Layer>
+            <Layer>
               {annotations.map(renderAnnotation)}
               {renderDraw()}
             </Layer>
