@@ -75,6 +75,21 @@ interface Props {
   enableSelectAll?: boolean;
   /** Show fullscreen toggle button in the status bar. Default: true */
   showFullscreen?: boolean;
+  /**
+   * When label chips are visible on annotations.
+   * - "always"         — always shown when zoom ≥ 30% (default)
+   * - "hover"          — only while the cursor is over the annotation
+   * - "selected"       — only when the annotation is selected
+   * - "hover+selected" — on hover OR when selected
+   */
+  labelVisibility?: "always" | "hover" | "selected" | "hover+selected";
+  /**
+   * Gesture that commits a polyline in progress.
+   * - "enter"        — press Enter to finish (default)
+   * - "right-click"  — right-click anywhere on the canvas
+   * - "double-click" — double-click to place the last point and finish
+   */
+  polylineFinishAction?: "enter" | "right-click" | "double-click";
 
   // --- scale ---
   /** Scanner resolution of the image in dots per inch. Required for real-world dimension display. */
@@ -107,6 +122,8 @@ export function AnnotationCanvas({
   showUndoRedo = true,
   enableSelectAll = true,
   showFullscreen = true,
+  labelVisibility = "always",
+  polylineFinishAction = "enter",
   dpi,
   drawingScale: drawingScaleProp,
   onDrawingScaleChange,
@@ -131,6 +148,8 @@ export function AnnotationCanvas({
   const future = useRef<CanonicalAnnotation[][]>([]);
   const annotationsRef = useRef(annotations);
   annotationsRef.current = annotations;
+  // Tracks last polyline click timestamp for double-click finish detection
+  const lastPolylineClickRef = useRef<number>(0);
 
   // Expose undo/redo availability to the toolbar
   const [canUndo, setCanUndo] = useState(false);
@@ -443,7 +462,7 @@ export function AnnotationCanvas({
         setDraw({ phase: "polygon-pending", pts: draw.pts, pos: pos as [number, number] });
         return;
       }
-      if (e.key === "Enter" && draw.phase === "polyline-drawing" && draw.pts.length >= 2) {
+      if (e.key === "Enter" && draw.phase === "polyline-drawing" && draw.pts.length >= 2 && polylineFinishAction === "enter") {
         const pos = draw.pts[draw.pts.length - 1] ?? [0, 0];
         setDraw({ phase: "polyline-pending", pts: draw.pts, pos: pos as [number, number] });
         return;
@@ -455,7 +474,7 @@ export function AnnotationCanvas({
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp); };
-  }, [draw, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelId, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill]);
+  }, [draw, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelId, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction]);
 
   // ---------------------------------------------------------------------------
   // Stage event handlers
@@ -512,8 +531,19 @@ export function AnnotationCanvas({
 
     if (tool === "polyline") {
       if (draw.phase === "polyline-drawing") {
+        if (polylineFinishAction === "double-click") {
+          const now = Date.now();
+          if (now - lastPolylineClickRef.current < 300 && draw.pts.length >= 2) {
+            // Second click within 300ms — commit without adding another vertex
+            lastPolylineClickRef.current = 0;
+            setDraw({ phase: "polyline-pending", pts: draw.pts, pos: imgPos });
+            return;
+          }
+          lastPolylineClickRef.current = now;
+        }
         setDraw({ ...draw, pts: [...draw.pts, imgPos] });
       } else {
+        if (polylineFinishAction === "double-click") lastPolylineClickRef.current = Date.now();
         setDraw({ phase: "polyline-drawing", pts: [imgPos], cur: imgPos });
       }
       return;
@@ -527,7 +557,7 @@ export function AnnotationCanvas({
 
     if (tool === "point") { setDraw({ phase: "point-pending", pt: imgPos, pos: imgPos }); return; }
     if (tool === "circle") { setDraw({ phase: "circle-drawing", center: imgPos, cur: imgPos }); return; }
-  }, [shouldPan, readonly, tool, draw, getImagePos, scale, stagePos]);
+  }, [shouldPan, readonly, tool, draw, getImagePos, scale, stagePos, polylineFinishAction]);
 
   const handleStageMouseMove = useCallback((e: KonvaEventObject<MouseEvent>) => {
     const stage = stageRef.current;
@@ -641,6 +671,14 @@ export function AnnotationCanvas({
     setDraggingHandle(null);
     setDraggingVertex(null);
   }, [readonly, draw, getImagePos, marquee]);
+
+  const handleStageContextMenu = useCallback((e: KonvaEventObject<MouseEvent>) => {
+    if (polylineFinishAction !== "right-click") return;
+    if (draw.phase !== "polyline-drawing" || draw.pts.length < 2) return;
+    e.evt.preventDefault();
+    const pos = draw.pts[draw.pts.length - 1]!;
+    setDraw({ phase: "polyline-pending", pts: draw.pts, pos });
+  }, [polylineFinishAction, draw]);
 
   const handleWheel = useCallback((e: KonvaEventObject<WheelEvent>) => {
     e.evt.preventDefault();
@@ -874,7 +912,12 @@ export function AnnotationCanvas({
       onMouseLeave: () => setHoveredId(null),
     };
 
-    const chipVisible = scale >= 0.3;
+    const chipVisible = scale >= 0.3 && (
+      labelVisibility === "always" ? true
+      : labelVisibility === "hover" ? isHovered
+      : labelVisibility === "selected" ? isSelected
+      : /* "hover+selected" */ isHovered || isSelected
+    );
     let chipX = 0, chipY = 0;
     if (ann.type === "bbox" || ann.type === "circle") {
       chipX = Math.min(ann.points[0]![0], ann.points[1]![0]);
@@ -1063,6 +1106,7 @@ export function AnnotationCanvas({
             onMouseEnter={() => setHoveredId(ann.id)}
             onMouseLeave={() => setHoveredId(null)}
           />
+          {chip}
         </Group>
       );
     }
@@ -1113,7 +1157,11 @@ export function AnnotationCanvas({
     if (draw.phase === "polyline-drawing" && draw.pts.length > 0) {
       const flat = draw.pts.flatMap(([x, y]) => [x, y]);
       const lastPt = draw.pts[draw.pts.length - 1]!;
-      const hint = draw.pts.length >= 2 ? "Enter to finish · Esc to cancel" : "Click to add points · Esc to cancel";
+      const finishLabel =
+        polylineFinishAction === "right-click" ? "Right-click" :
+        polylineFinishAction === "double-click" ? "Double-click" :
+        "Enter";
+      const hint = draw.pts.length >= 2 ? `${finishLabel} to finish · Esc to cancel` : "Click to add points · Esc to cancel";
       const hintWidth = hint.length * 7 / scale + 12 / scale;
       return (
         <Group>
@@ -1211,6 +1259,7 @@ export function AnnotationCanvas({
             onMouseDown={handleStageMouseDown as (e: KonvaEventObject<Event>) => void}
             onMouseMove={handleStageMouseMove as (e: KonvaEventObject<Event>) => void}
             onMouseUp={handleStageMouseUp as (e: KonvaEventObject<Event>) => void}
+            onContextMenu={handleStageContextMenu as (e: KonvaEventObject<Event>) => void}
             onWheel={handleWheel}
             listening={true}
           >

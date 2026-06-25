@@ -172,6 +172,12 @@ interface AnnotationCanvasProps {
   enableSelectAll?: boolean;  // Ctrl/Cmd+A selects all annotations
   showFullscreen?: boolean;   // fullscreen toggle button in the status bar
 
+  // Label chip visibility
+  labelVisibility?: "always" | "hover" | "selected" | "hover+selected"; // default: "always"
+
+  // Polyline
+  polylineFinishAction?: "enter" | "right-click" | "double-click"; // default: "enter"
+
   // Drawing scale — enables real-world dimension display on annotation chips
   dpi?: number;                                       // scanner resolution (dots per inch)
   drawingScale?: DrawingScale;                        // CV-extracted or user-set drawing scale
@@ -557,6 +563,80 @@ All three toggles default to `true`. Set any to `false` to hide the feature from
 ```
 
 > **Note:** Disabling `showUndoRedo` hides the toolbar buttons but does **not** disable the `Ctrl+Z` / `Ctrl+Shift+Z` keyboard shortcuts. If you need to disable undo/redo entirely, combine `showUndoRedo={false}` with `readonly={true}`.
+
+---
+
+## Label chip visibility
+
+Label chips (the color dot + display name + confidence % shown on each annotation) can be configured to appear only when the user is actively interacting with an annotation, rather than cluttering the canvas at all times.
+
+### `labelVisibility` prop
+
+```typescript
+labelVisibility?: "always" | "hover" | "selected" | "hover+selected"
+```
+
+| Value              | When chips appear                                             |
+| ------------------ | ------------------------------------------------------------- |
+| `"always"`         | Whenever zoom ≥ 30% (default — current behavior)             |
+| `"hover"`          | Only while the cursor is over the annotation                  |
+| `"selected"`       | Only when the annotation is selected (clicked / focused)      |
+| `"hover+selected"` | On hover **or** when selected — hidden otherwise              |
+
+`"hover+selected"` is the recommended value for dense drawings where labels overlap and obscure the underlying geometry. `"always"` (the default) preserves existing behavior for backward compatibility.
+
+### Examples
+
+```tsx
+// Default — always visible when zoom is sufficient
+<AnnotationCanvas labelVisibility="always" ... />
+
+// Show labels only while hovering (minimal clutter)
+<AnnotationCanvas labelVisibility="hover" ... />
+
+// Show labels only when annotation is selected
+<AnnotationCanvas labelVisibility="selected" ... />
+
+// Show on hover or selection — best for dense drawings
+<AnnotationCanvas labelVisibility="hover+selected" ... />
+```
+
+---
+
+## Polyline finish action
+
+By default, a polyline in progress is committed by pressing `Enter`. This can be changed to right-click or double-click depending on your workflow or user preference.
+
+### `polylineFinishAction` prop
+
+```typescript
+polylineFinishAction?: "enter" | "right-click" | "double-click"
+```
+
+| Value           | How to finish drawing                                                                   |
+| --------------- | --------------------------------------------------------------------------------------- |
+| `"enter"`       | Press `Enter` (default)                                                                 |
+| `"right-click"` | Right-click anywhere on the canvas                                                      |
+| `"double-click"`| Click rapidly twice — second click commits without adding an extra vertex               |
+
+The hint tooltip that follows the cursor while drawing always reflects the configured action, so users see the correct instruction regardless of mode.
+
+`Escape` cancels and discards the polyline in progress regardless of which finish action is set.
+
+### Examples
+
+```tsx
+// Default — press Enter to finish
+<AnnotationCanvas polylineFinishAction="enter" ... />
+
+// Right-click to finish (common in GIS / CAD tools)
+<AnnotationCanvas polylineFinishAction="right-click" ... />
+
+// Double-click to finish
+<AnnotationCanvas polylineFinishAction="double-click" ... />
+```
+
+---
 
 ### Label selector popover
 
