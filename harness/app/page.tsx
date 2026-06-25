@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import type {
   CanonicalAnnotation,
   ThemeVars,
@@ -78,12 +78,18 @@ function getAnnotations(engine: Engine): CanonicalAnnotation[] {
   }
 }
 
+type LabelVisibility = "always" | "hover" | "selected" | "hover+selected";
+type FinishAction = "enter" | "right-click" | "double-click";
+
 export default function Page() {
   const [engine, setEngine] = useState<Engine>("A");
   const [labels, setLabels] = useState(labelRegistry);
   const [scalePreset, setScalePreset] = useState(1); // default: A-200A title block scale
+  const [labelVisibility, setLabelVisibility] = useState<LabelVisibility>("always");
+  const [polylineFinishAction, setPolylineFinishAction] = useState<FinishAction>("right-click");
+  const [countFinishAction, setCountFinishAction] = useState<FinishAction>("right-click");
   const activePreset = SCALE_PRESETS[scalePreset]!;
-  const annotations = getAnnotations(engine);
+  const annotations = useMemo(() => getAnnotations(engine), [engine]);
 
   return (
     <div
@@ -192,13 +198,57 @@ export default function Page() {
           </select>
         </div>
 
+        {/* New feature controls */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, borderLeft: `1px solid ${lightTheme.border}`, paddingLeft: 12 }}>
+          <label style={{ fontSize: 11, color: lightTheme.textSecondary, display: "flex", alignItems: "center", gap: 4 }}>
+            Label chips:
+            <select
+              value={labelVisibility}
+              onChange={(e) => setLabelVisibility(e.target.value as LabelVisibility)}
+              style={selectStyle(lightTheme)}
+            >
+              <option value="always">always</option>
+              <option value="hover">hover</option>
+              <option value="selected">selected</option>
+              <option value="hover+selected">hover+selected</option>
+            </select>
+          </label>
+
+          <label style={{ fontSize: 11, color: lightTheme.textSecondary, display: "flex", alignItems: "center", gap: 4 }}>
+            Polyline end:
+            <select
+              value={polylineFinishAction}
+              onChange={(e) => setPolylineFinishAction(e.target.value as FinishAction)}
+              style={selectStyle(lightTheme)}
+            >
+              <option value="enter">enter</option>
+              <option value="right-click">right-click</option>
+              <option value="double-click">double-click</option>
+            </select>
+          </label>
+
+          <label style={{ fontSize: 11, color: lightTheme.textSecondary, display: "flex", alignItems: "center", gap: 4 }}>
+            Count end:
+            <select
+              value={countFinishAction}
+              onChange={(e) => setCountFinishAction(e.target.value as FinishAction)}
+              style={selectStyle(lightTheme)}
+            >
+              <option value="enter">enter</option>
+              <option value="right-click">right-click</option>
+              <option value="double-click">double-click</option>
+            </select>
+          </label>
+        </div>
+
         {/* Feature hints */}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: 11, color: lightTheme.textMuted }}>
             <kbd style={kbdStyle}>B</kbd> bbox &nbsp;
             <kbd style={kbdStyle}>C</kbd> circle &nbsp;
             <kbd style={kbdStyle}>P</kbd> polygon &nbsp;
-            <kbd style={kbdStyle}>Y</kbd> polyline
+            <kbd style={kbdStyle}>Y</kbd> polyline &nbsp;
+            <kbd style={kbdStyle}>T</kbd> count
           </span>
           <span style={{ fontSize: 11, color: lightTheme.textMuted }}>
             <kbd style={kbdStyle}>Ctrl+A</kbd> select all
@@ -223,6 +273,9 @@ export default function Page() {
           showZoomControls={true}
           showUndoRedo={true}
           enableSelectAll={true}
+          labelVisibility={labelVisibility}
+          polylineFinishAction={polylineFinishAction}
+          countFinishAction={countFinishAction}
           dpi={activePreset.dpi > 0 ? activePreset.dpi : undefined}
           drawingScale={activePreset.dpi > 0 ? activePreset.scale : undefined}
           onDrawingScaleChange={(s) => console.log("[annotation-engine] onDrawingScaleChange", s)}
@@ -252,3 +305,16 @@ const kbdStyle: React.CSSProperties = {
   fontFamily: "monospace",
   color: "#444",
 };
+
+function selectStyle(theme: Partial<ThemeVars>): React.CSSProperties {
+  return {
+    height: 24,
+    background: theme.bgSurface,
+    border: `1px solid ${theme.border}`,
+    borderRadius: 4,
+    color: theme.textPrimary,
+    fontSize: 11,
+    padding: "0 6px",
+    cursor: "pointer",
+  };
+}

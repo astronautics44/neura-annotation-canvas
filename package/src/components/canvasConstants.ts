@@ -38,7 +38,9 @@ export type DrawState =
   | { phase: "line-pending"; points: [[number, number], [number, number]]; pos: [number, number] }
   | { phase: "point-pending"; pt: [number, number]; pos: [number, number] }
   | { phase: "circle-drawing"; center: [number, number]; cur: [number, number] }
-  | { phase: "circle-pending"; points: [[number, number], [number, number]]; pos: [number, number] };
+  | { phase: "circle-pending"; points: [[number, number], [number, number]]; pos: [number, number] }
+  | { phase: "count-drawing"; pts: [number, number][]; cur: [number, number] }
+  | { phase: "count-pending"; pts: [number, number][]; pos: [number, number] };
 
 export type Action =
   | { type: "LOAD"; payload: import("../types/canonical").CanonicalAnnotation[] }

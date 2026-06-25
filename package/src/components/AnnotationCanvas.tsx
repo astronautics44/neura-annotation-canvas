@@ -90,6 +90,13 @@ interface Props {
    * - "double-click" — double-click to place the last point and finish
    */
   polylineFinishAction?: "enter" | "right-click" | "double-click";
+  /**
+   * Gesture that commits a count (multi-point) session in progress.
+   * - "enter"        — press Enter to finish (default)
+   * - "right-click"  — right-click anywhere on the canvas
+   * - "double-click" — double-click to place the last point and finish
+   */
+  countFinishAction?: "enter" | "right-click" | "double-click";
 
   // --- scale ---
   /** Scanner resolution of the image in dots per inch. Required for real-world dimension display. */
@@ -124,6 +131,7 @@ export function AnnotationCanvas({
   showFullscreen = true,
   labelVisibility = "always",
   polylineFinishAction = "enter",
+  countFinishAction = "enter",
   dpi,
   drawingScale: drawingScaleProp,
   onDrawingScaleChange,
@@ -148,8 +156,9 @@ export function AnnotationCanvas({
   const future = useRef<CanonicalAnnotation[][]>([]);
   const annotationsRef = useRef(annotations);
   annotationsRef.current = annotations;
-  // Tracks last polyline click timestamp for double-click finish detection
+  // Tracks last click timestamps for double-click finish detection
   const lastPolylineClickRef = useRef<number>(0);
+  const lastCountClickRef = useRef<number>(0);
 
   // Expose undo/redo availability to the toolbar
   const [canUndo, setCanUndo] = useState(false);
@@ -430,6 +439,7 @@ export function AnnotationCanvas({
       if (e.key === "l" || e.key === "L") { setPanMode(false); setTool("line"); setDraw({ phase: "idle" }); return; }
       if (e.key === "n" || e.key === "N") { setPanMode(false); setTool("point"); setDraw({ phase: "idle" }); return; }
       if (e.key === "c" || e.key === "C") { setPanMode(false); setTool("circle"); setDraw({ phase: "idle" }); return; }
+      if (e.key === "t" || e.key === "T") { setPanMode(false); setTool("count"); setDraw({ phase: "idle" }); return; }
 
       // Shape boolean ops (area shapes only)
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && !readonly) {
@@ -467,6 +477,11 @@ export function AnnotationCanvas({
         setDraw({ phase: "polyline-pending", pts: draw.pts, pos: pos as [number, number] });
         return;
       }
+      if (e.key === "Enter" && draw.phase === "count-drawing" && draw.pts.length >= 1 && countFinishAction === "enter") {
+        const pos = draw.pts[draw.pts.length - 1] ?? [0, 0];
+        setDraw({ phase: "count-pending", pts: draw.pts, pos: pos as [number, number] });
+        return;
+      }
     };
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.code === "Space") setSpaceDown(false);
@@ -474,7 +489,7 @@ export function AnnotationCanvas({
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp); };
-  }, [draw, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelId, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction]);
+  }, [draw, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelId, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction]);
 
   // ---------------------------------------------------------------------------
   // Stage event handlers
@@ -557,7 +572,26 @@ export function AnnotationCanvas({
 
     if (tool === "point") { setDraw({ phase: "point-pending", pt: imgPos, pos: imgPos }); return; }
     if (tool === "circle") { setDraw({ phase: "circle-drawing", center: imgPos, cur: imgPos }); return; }
-  }, [shouldPan, readonly, tool, draw, getImagePos, scale, stagePos, polylineFinishAction]);
+
+    if (tool === "count") {
+      if (draw.phase === "count-drawing") {
+        if (countFinishAction === "double-click") {
+          const now = Date.now();
+          if (now - lastCountClickRef.current < 300 && draw.pts.length >= 1) {
+            lastCountClickRef.current = 0;
+            setDraw({ phase: "count-pending", pts: draw.pts, pos: imgPos });
+            return;
+          }
+          lastCountClickRef.current = now;
+        }
+        setDraw({ ...draw, pts: [...draw.pts, imgPos] });
+      } else {
+        if (countFinishAction === "double-click") lastCountClickRef.current = Date.now();
+        setDraw({ phase: "count-drawing", pts: [imgPos], cur: imgPos });
+      }
+      return;
+    }
+  }, [shouldPan, readonly, tool, draw, getImagePos, scale, stagePos, polylineFinishAction, countFinishAction]);
 
   const handleStageMouseMove = useCallback((e: KonvaEventObject<MouseEvent>) => {
     const stage = stageRef.current;
@@ -584,6 +618,7 @@ export function AnnotationCanvas({
     if (draw.phase === "polyline-drawing") setDraw({ ...draw, cur: imgPos });
     if (draw.phase === "line-drawing") setDraw({ ...draw, cur: imgPos });
     if (draw.phase === "circle-drawing") setDraw({ ...draw, cur: imgPos });
+    if (draw.phase === "count-drawing") setDraw({ ...draw, cur: imgPos });
 
     if (draggingAnnotation) {
       const dx = imgPos[0] - draggingAnnotation.startImg[0];
@@ -673,12 +708,18 @@ export function AnnotationCanvas({
   }, [readonly, draw, getImagePos, marquee]);
 
   const handleStageContextMenu = useCallback((e: KonvaEventObject<MouseEvent>) => {
-    if (polylineFinishAction !== "right-click") return;
-    if (draw.phase !== "polyline-drawing" || draw.pts.length < 2) return;
-    e.evt.preventDefault();
-    const pos = draw.pts[draw.pts.length - 1]!;
-    setDraw({ phase: "polyline-pending", pts: draw.pts, pos });
-  }, [polylineFinishAction, draw]);
+    if (polylineFinishAction === "right-click" && draw.phase === "polyline-drawing" && draw.pts.length >= 2) {
+      e.evt.preventDefault();
+      const pos = draw.pts[draw.pts.length - 1]!;
+      setDraw({ phase: "polyline-pending", pts: draw.pts, pos });
+      return;
+    }
+    if (countFinishAction === "right-click" && draw.phase === "count-drawing" && draw.pts.length >= 1) {
+      e.evt.preventDefault();
+      const pos = draw.pts[draw.pts.length - 1]!;
+      setDraw({ phase: "count-pending", pts: draw.pts, pos });
+    }
+  }, [polylineFinishAction, countFinishAction, draw]);
 
   const handleWheel = useCallback((e: KonvaEventObject<WheelEvent>) => {
     e.evt.preventDefault();
@@ -754,9 +795,13 @@ export function AnnotationCanvas({
       dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "point", points: [draw.pt], ...base } });
     } else if (draw.phase === "circle-pending") {
       dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "circle", points: draw.points, ...base } });
+    } else if (draw.phase === "count-pending") {
+      const pts = draw.pts;
+      snapshot();
+      dispatch({ type: "ADD_MANY", payload: pts.map((pt) => ({ id: newId(), type: "point" as const, points: [pt] as [number, number][], ...base })) });
     }
     setDraw({ phase: "idle" });
-  }, [draw, dispatchAndNotify]);
+  }, [draw, dispatchAndNotify, snapshot]);
 
   const applyRelabel = useCallback((annId: string, label: string, symbolSize?: SymbolSize) => {
     const ann = annotations.find((a) => a.id === annId);
@@ -795,7 +840,7 @@ export function AnnotationCanvas({
   }, [labels, onLabelsChange]);
 
   const popoverPos = (): { x: number; y: number } | null => {
-    if (!["bbox-pending","polygon-pending","polyline-pending","line-pending","point-pending","circle-pending"].includes(draw.phase)) return null;
+    if (!["bbox-pending","polygon-pending","polyline-pending","line-pending","point-pending","circle-pending","count-pending"].includes(draw.phase)) return null;
     const pos = (draw as { pos: [number,number] }).pos;
     return { x: pos[0] * scale + stagePos.x, y: pos[1] * scale + stagePos.y };
   };
@@ -912,12 +957,13 @@ export function AnnotationCanvas({
       onMouseLeave: () => setHoveredId(null),
     };
 
-    const chipVisible = scale >= 0.3 && (
-      labelVisibility === "always" ? true
+    // "always" respects the 30% zoom floor (unreadable below that).
+    // Interactive modes show on demand regardless of zoom level.
+    const chipVisible =
+      labelVisibility === "always" ? scale >= 0.3
       : labelVisibility === "hover" ? isHovered
       : labelVisibility === "selected" ? isSelected
-      : /* "hover+selected" */ isHovered || isSelected
-    );
+      : /* "hover+selected" */ isHovered || isSelected;
     let chipX = 0, chipY = 0;
     if (ann.type === "bbox" || ann.type === "circle") {
       chipX = Math.min(ann.points[0]![0], ann.points[1]![0]);
@@ -1198,6 +1244,26 @@ export function AnnotationCanvas({
       );
     }
 
+    if (draw.phase === "count-drawing" && draw.pts.length > 0) {
+      const finishLabel =
+        countFinishAction === "right-click" ? "Right-click" :
+        countFinishAction === "double-click" ? "Double-click" :
+        "Enter";
+      const countText = `${draw.pts.length} pt${draw.pts.length !== 1 ? "s" : ""} · ${finishLabel} to finish · Esc to cancel`;
+      const hintWidth = countText.length * 7 / scale + 12 / scale;
+      return (
+        <Group>
+          {draw.pts.map(([x, y], i) => (
+            <Circle key={i} x={x} y={y} radius={8 / scale} fill={resolved.accent} stroke={resolved.handleFill} strokeWidth={2 / scale} opacity={0.85} />
+          ))}
+          <Group x={draw.cur[0] + 10 / scale} y={draw.cur[1] + 10 / scale}>
+            <Rect width={hintWidth} height={18 / scale} fill={hexToRgba(resolved.bgElevated, 0.9)} stroke={hexToRgba(resolved.accent, 0.45)} strokeWidth={1 / scale} cornerRadius={4 / scale} />
+            <Text x={6 / scale} y={3 / scale} text={countText} fontSize={11 / scale} fill={resolved.textPrimary} fontFamily="system-ui" />
+          </Group>
+        </Group>
+      );
+    }
+
     return null;
   };
 
@@ -1205,7 +1271,7 @@ export function AnnotationCanvas({
   // Layout
   // ---------------------------------------------------------------------------
 
-  const availableTools = tools ?? (["select", "bbox", "polygon", "polyline", "line", "point", "circle"] as ToolType[]);
+  const availableTools = tools ?? (["select", "bbox", "polygon", "polyline", "line", "point", "circle", "count"] as ToolType[]);
   const selectedAreaCount = selectedIds
     .map((id) => annotations.find((a) => a.id === id))
     .filter((a): a is CanonicalAnnotation => a != null && isAreaAnnotation(a)).length;

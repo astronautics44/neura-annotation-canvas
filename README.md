@@ -175,8 +175,9 @@ interface AnnotationCanvasProps {
   // Label chip visibility
   labelVisibility?: "always" | "hover" | "selected" | "hover+selected"; // default: "always"
 
-  // Polyline
+  // Polyline / Count
   polylineFinishAction?: "enter" | "right-click" | "double-click"; // default: "enter"
+  countFinishAction?: "enter" | "right-click" | "double-click";    // default: "enter"
 
   // Drawing scale — enables real-world dimension display on annotation chips
   dpi?: number;                                       // scanner resolution (dots per inch)
@@ -501,6 +502,7 @@ The theme values are injected as CSS custom properties on the root element (`--a
 | Line       | `L`          | minus     | Two-click draw; label popover on second click                               |
 | Point      | `N`          | crosshair | Single click; label popover immediately                                     |
 | Circle     | `C`          | circle    | Click sets center, drag sets radius; label popover on release               |
+| Count      | `T`          | dots      | Click to place multiple points; finish action commits all with one label    |
 | Hand (pan) | `H`          | hand      | Toggle pan mode; also `Space`+drag or middle-mouse drag                     |
 
 ### Canvas navigation
@@ -634,6 +636,66 @@ The hint tooltip that follows the cursor while drawing always reflects the confi
 
 // Double-click to finish
 <AnnotationCanvas polylineFinishAction="double-click" ... />
+```
+
+---
+
+## Count tool (multi-point batch placement)
+
+The count tool lets reviewers place multiple points in a single session and assign one label to all of them at once — eliminating the label popover after each individual click. This mirrors the polyline drawing flow but produces N separate `point` annotations sharing the same label.
+
+**Workflow:**
+
+1. Press `T` (or click the count tool in the toolbar)
+2. Click anywhere on the canvas to place point markers — each click drops a dot
+3. Commit with the configured finish action (default: `Enter`)
+4. A single label popover appears — pick a label once
+5. All placed points are committed as individual `point` annotations with that label in one undo step
+
+### `countFinishAction` prop
+
+```typescript
+countFinishAction?: "enter" | "right-click" | "double-click"
+```
+
+Accepts the same values as `polylineFinishAction`. The cursor-following hint tooltip shows the current configured action and the running point count (`3 pts · Enter to finish · Esc to cancel`).
+
+| Value           | How to commit                                                                   |
+| --------------- | ------------------------------------------------------------------------------- |
+| `"enter"`       | Press `Enter` (default)                                                         |
+| `"right-click"` | Right-click anywhere on the canvas                                              |
+| `"double-click"`| Click rapidly twice — second click commits without adding an extra point        |
+
+### Output
+
+Each placed point becomes a standard `CanonicalAnnotation` with `type: "point"`. They are indistinguishable from points created with the single-point tool and round-trip normally through `onSave` / `onChange`.
+
+```typescript
+// Placing 3 points with the count tool and label "column" produces:
+[
+  { id: "abc", type: "point", points: [[120, 80]],  label: "column", source: "human" },
+  { id: "def", type: "point", points: [[340, 210]], label: "column", source: "human" },
+  { id: "ghi", type: "point", points: [[560, 95]],  label: "column", source: "human" },
+]
+```
+
+All three are added in a single undo step — `Ctrl+Z` removes the entire batch.
+
+### Examples
+
+```tsx
+// Default — press Enter to finish counting
+<AnnotationCanvas countFinishAction="enter" ... />
+
+// Right-click to finish (frees Enter for other shortcuts)
+<AnnotationCanvas countFinishAction="right-click" ... />
+
+// Use different finish actions for polyline vs count
+<AnnotationCanvas
+  polylineFinishAction="enter"
+  countFinishAction="right-click"
+  ...
+/>
 ```
 
 ---

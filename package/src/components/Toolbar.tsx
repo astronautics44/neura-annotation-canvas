@@ -49,6 +49,10 @@ const TOOL_META: Record<ToolType, ButtonDef> = {
     id: "circle", label: "Circle", shortcut: "C",
     icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/></svg>,
   },
+  count: {
+    id: "count", label: "Count", shortcut: "T, Enter to finish",
+    icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><circle cx="12" cy="12" r="2"/></svg>,
+  },
 };
 
 const HAND_BTN: ButtonDef = {

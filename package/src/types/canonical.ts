@@ -1,4 +1,4 @@
-export type ToolType = "select" | "bbox" | "polygon" | "polyline" | "line" | "point" | "circle";
+export type ToolType = "select" | "bbox" | "polygon" | "polyline" | "line" | "point" | "circle" | "count";
 
 export type AnnotationType = "bbox" | "polygon" | "polyline" | "line" | "point" | "circle";
 
