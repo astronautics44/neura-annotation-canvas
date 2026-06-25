@@ -561,9 +561,9 @@ export function AnnotationCanvas({
       // Move all selected annotations when dragging one that belongs to the selection
       const idsToMove = selectedIds.includes(draggingAnnotation.id) ? selectedIds : [draggingAnnotation.id];
       if (idsToMove.length === 1) {
-        dispatchAndNotify({ type: "MOVE", id: idsToMove[0]!, delta: [dx, dy] });
+        dispatch({ type: "MOVE", id: idsToMove[0]!, delta: [dx, dy] });
       } else {
-        dispatchAndNotify({ type: "MOVE_MANY", ids: idsToMove, delta: [dx, dy] });
+        dispatch({ type: "MOVE_MANY", ids: idsToMove, delta: [dx, dy] });
       }
       setDraggingAnnotation({ ...draggingAnnotation, startImg: imgPos });
     }
@@ -575,14 +575,14 @@ export function AnnotationCanvas({
           const { x, y, w } = bboxToKonva(ann.points);
           const cx = x + w / 2, cy = y + w / 2;
           const r = Math.max(4, Math.hypot(imgPos[0] - cx, imgPos[1] - cy));
-          dispatchAndNotify({ type: "UPDATE", payload: { ...ann, points: [[cx - r, cy - r], [cx + r, cy + r]] } });
+          dispatch({ type: "UPDATE", payload: { ...ann, points: [[cx - r, cy - r], [cx + r, cy + r]] } });
         } else {
           const dx = imgPos[0] - draggingHandle.startImg[0];
           const dy = imgPos[1] - draggingHandle.startImg[1];
           const { x, y, w, h } = bboxToKonva(ann.points);
           const handle = bboxHandles(x, y, w, h)[draggingHandle.handleIdx];
           if (handle) {
-            dispatchAndNotify({ type: "UPDATE", payload: { ...ann, points: handle.resizeFn(dx, dy, ann.points as [[number,number],[number,number]]) } });
+            dispatch({ type: "UPDATE", payload: { ...ann, points: handle.resizeFn(dx, dy, ann.points as [[number,number],[number,number]]) } });
           }
         }
         setDraggingHandle({ ...draggingHandle, startImg: imgPos });
@@ -592,11 +592,11 @@ export function AnnotationCanvas({
     if (draggingVertex) {
       const ann = annotationsRef.current.find((a) => a.id === draggingVertex.annId);
       if (ann) {
-        dispatchAndNotify({ type: "UPDATE", payload: { ...ann, points: ann.points.map((p, i) => i === draggingVertex.vertIdx ? imgPos : p) as [number,number][] } });
+        dispatch({ type: "UPDATE", payload: { ...ann, points: ann.points.map((p, i) => i === draggingVertex.vertIdx ? imgPos : p) as [number,number][] } });
         setDraggingVertex({ ...draggingVertex, startImg: imgPos });
       }
     }
-  }, [draw, stagePos, scale, draggingAnnotation, draggingHandle, draggingVertex, selectedIds, dispatchAndNotify, marquee]);
+  }, [draw, stagePos, scale, draggingAnnotation, draggingHandle, draggingVertex, selectedIds, dispatch, marquee]);
 
   const handleStageMouseUp = useCallback((e: KonvaEventObject<MouseEvent>) => {
     if (panStart.current) {
@@ -696,6 +696,8 @@ export function AnnotationCanvas({
     if (!selectedIds.includes(id)) {
       setSelectedIds([id]);
     }
+    // Snapshot once here — drag moves use raw dispatch so no per-frame cloning
+    snapshot();
     setDraggingAnnotation({ id, startImg: getImagePos(e) });
   }, [tool, readonly, panMode, getImagePos, selectedIds, cloneAnnotations, snapshot]);
 
@@ -929,6 +931,7 @@ export function AnnotationCanvas({
               radius={HANDLE_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={2 / scale}
               onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
                 e.cancelBubble = true;
+                snapshot();
                 setDraggingHandle({ annId: ann.id, handleIdx: i, startImg: getImagePos(e) });
               }}
             />
@@ -959,6 +962,7 @@ export function AnnotationCanvas({
               radius={HANDLE_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={2 / scale}
               onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
                 e.cancelBubble = true;
+                snapshot();
                 setDraggingHandle({ annId: ann.id, handleIdx: i, startImg: getImagePos(e) });
               }}
             />
@@ -977,6 +981,7 @@ export function AnnotationCanvas({
               <Circle key={i} x={x} y={y} radius={VERTEX_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={1.5 / scale}
                 onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
                   e.cancelBubble = true;
+                  snapshot();
                   setDraggingVertex({ annId: ann.id, vertIdx: i, startImg: getImagePos(e) });
                 }}
               />
@@ -1009,10 +1014,39 @@ export function AnnotationCanvas({
             <Circle key={i} x={x} y={y} radius={HANDLE_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={2 / scale}
               onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
                 e.cancelBubble = true;
+                snapshot();
                 setDraggingVertex({ annId: ann.id, vertIdx: i, startImg: getImagePos(e) });
               }}
             />
           ))}
+          {showHandles && ann.points.slice(0, -1).map(([x1, y1], i) => {
+            const [x2, y2] = ann.points[i + 1]!;
+            const mx = (x1 + x2) / 2;
+            const my = (y1 + y2) / 2;
+            return (
+              <Circle key={`mid-${i}`} x={mx} y={my}
+                radius={(HANDLE_RADIUS * 0.65) / scale}
+                fill={resolved.accent}
+                stroke={resolved.handleFill}
+                strokeWidth={1.5 / scale}
+                opacity={0.85}
+                onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
+                  e.cancelBubble = true;
+                  const newPts: [number, number][] = [...ann.points];
+                  newPts.splice(i + 1, 0, [mx, my]);
+                  const updated: CanonicalAnnotation = {
+                    ...ann,
+                    type: ann.type === "line" ? "polyline" : ann.type,
+                    points: newPts,
+                  };
+                  // Sync ref immediately so the drag handler sees the new vertex on the same frame
+                  annotationsRef.current = annotationsRef.current.map((a) => a.id === ann.id ? updated : a);
+                  dispatchAndNotify({ type: "UPDATE", payload: updated });
+                  setDraggingVertex({ annId: ann.id, vertIdx: i + 1, startImg: [mx, my] });
+                }}
+              />
+            );
+          })}
           {chip}
         </Group>
       );
