@@ -594,6 +594,8 @@ All state lives inside `AnnotationCanvas`. No external store required.
 
 Undo/redo history is kept in-memory (up to 100 steps). It resets when the `annotations` prop changes (e.g. when switching fixtures). The toolbar undo/redo buttons are automatically enabled/disabled based on history availability.
 
+**Undo granularity:** each complete drag gesture (mousedown → mouseup) counts as one undo step, not one step per pixel moved. A snapshot is taken when the drag starts; intermediate positions during the drag are not pushed to history. Discrete actions (draw, delete, relabel, split segment) each produce their own undo step.
+
 ---
 
 ## Annotation rendering
@@ -608,6 +610,12 @@ Annotations render differently based on state and source:
 | Selected         | 2px          | 18%        | —       |
 
 Selected annotations show resize handles (bboxes: 8 handles at corners + edge midpoints; polygons: handles at every vertex; lines: handles at endpoints; circles: 4 cardinal handles — dragging any handle adjusts the radius while keeping the circle perfectly round).
+
+### Splitting line / polyline segments
+
+When a `line` or `polyline` is selected, a smaller accent-colored handle appears at the **midpoint of each segment**. Clicking it inserts a new vertex at that midpoint, splitting the segment in two. The new vertex can be dragged immediately to reshape the annotation. Splitting a `line` (two endpoints) promotes it to `polyline` in the output.
+
+This is the primary way to add detail to an existing line or polyline without redrawing it from scratch.
 
 Label chips (color dot + display name + confidence % + optional symbol size) are rendered at each annotation. They are hidden when zoom drops below 30%.
 
