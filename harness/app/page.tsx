@@ -25,7 +25,8 @@ const AnnotationCanvas = dynamic(
   { ssr: false },
 );
 
-const FLOOR_PLAN_URL = "/construction_drawing.png";
+// Page 5 (sheet A-200A "ADMIN ELEVATIONS") rendered at 300 DPI → 10800×7200 px (36"×24" ARCH-D sheet)
+const FLOOR_PLAN_URL = "/admin-elevations-p5.png";
 
 // Light / white theme for the harness
 const lightTheme: Partial<ThemeVars> = {
@@ -46,12 +47,15 @@ const lightTheme: Partial<ThemeVars> = {
   selection: "rgba(37,99,235,0.12)",
 };
 
-// Preset scales for the demo — covers metric and imperial conventions
+// Preset scales for the demo — A-200A sheet + generic metric/imperial
 const SCALE_PRESETS: { label: string; scale: DrawingScale; dpi: number }[] = [
   { label: "None", scale: { paperValue: 1, paperUnit: "mm", realValue: 1, realUnit: "mm", label: "—" }, dpi: 0 },
+  // A-200A title block reads 1/8"=1'-0" → 1 paper inch = 8 real feet
+  { label: 'A-200A  1"=8\' (title block) @ 300 DPI', scale: { paperValue: 1, paperUnit: "in", realValue: 8, realUnit: "ft", label: '1in=8ft' }, dpi: 300 },
+  // Measured from datum lines (134'→150' = 16 ft over 545 px): ~1"=8.8'
+  { label: 'A-200A  1"=8.8\' (measured) @ 300 DPI',  scale: { paperValue: 1, paperUnit: "in", realValue: 8.8, realUnit: "ft", label: '1in=8.8ft' }, dpi: 300 },
   { label: "1:100 @ 300 DPI", scale: { paperValue: 1, paperUnit: "mm", realValue: 100, realUnit: "mm", label: "1mm=100mm" }, dpi: 300 },
   { label: "1:50 @ 300 DPI",  scale: { paperValue: 1, paperUnit: "mm", realValue: 50,  realUnit: "mm", label: "1mm=50mm"  }, dpi: 300 },
-  { label: '1/4"=1\' @ 300 DPI', scale: { paperValue: 0.25, paperUnit: "in", realValue: 1, realUnit: "ft", label: '0.25in=1ft' }, dpi: 300 },
 ];
 
 type Engine = "A" | "B" | "C" | "D";
@@ -72,7 +76,7 @@ function getAnnotations(engine: Engine): CanonicalAnnotation[] {
 export default function Page() {
   const [engine, setEngine] = useState<Engine>("A");
   const [labels, setLabels] = useState(labelRegistry);
-  const [scalePreset, setScalePreset] = useState(0); // index into SCALE_PRESETS
+  const [scalePreset, setScalePreset] = useState(1); // index into SCALE_PRESETS (default: A-200A 1"=8')
   const activePreset = SCALE_PRESETS[scalePreset]!;
   const annotations = getAnnotations(engine);
 
