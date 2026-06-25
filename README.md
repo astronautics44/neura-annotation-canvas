@@ -392,7 +392,7 @@ interface ThemeVars {
 
   // Layout dimensions (px)
   toolbarWidth: number; // left toolbar width    default: 48
-  panelWidth: number; // right label panel     default: 220
+  panelWidth: number; // right label panel     default: 260
   statusBarHeight: number; // bottom status bar     default: 28
 }
 ```
@@ -579,7 +579,8 @@ Shows all annotations grouped by label. Features:
 - Click a group header to collapse/expand
 - Hover a row to reveal relabel (✎) and delete (✕) actions
 - Each annotation shows an `H` badge (human-created) or `AI` badge (engine output)
-- When `meta.symbolSize` is set, the row shows the manual dimension (e.g. `diameter 12mm`)
+- When `meta.symbolSize` is set, the row shows the manual dimension (e.g. `diameter - 12mm`)
+- When `dpi` and `drawingScale` are set, each row also shows the computed real-world size below the annotation ID (e.g. `4.25m` for a line, `0.90m × 2.10m` for a bbox)
 
 ---
 
@@ -682,14 +683,24 @@ real dimension = pixels × scale.value / dpi             (imperial)
 ### `DrawingScale` type
 
 ```typescript
-import type { DrawingScale } from "@astronautics44/neura-annotation-canvas";
+import type { DrawingScale, ScaleSideInput } from "@astronautics44/neura-annotation-canvas";
+
+interface ScaleSideInput {
+  amount: string;  // numeric string; fractions allowed, e.g. "1/4"
+  unit: "in" | "mm" | "cm" | "m" | "ft";
+  inches?: string; // supplemental inches when unit is "ft", e.g. "0" for 1'-0"
+}
 
 interface DrawingScale {
-  value: number;                            // real units per 1 paper unit
+  value: number;                            // real units per 1 paper unit (computed)
   unit: "mm" | "cm" | "m" | "in" | "ft";  // real-world unit for display
   label: string;                            // human-readable string shown in the status bar
+  paper?: ScaleSideInput;                   // stored for round-trip editor display
+  real?: ScaleSideInput;                    // stored for round-trip editor display
 }
 ```
+
+`value`/`unit` are the computed ratio used for all dimension math. `paper`/`real` are optional — include them if you want the built-in scale editor to pre-fill correctly when the user opens it.
 
 ### Common scale values
 
@@ -702,6 +713,19 @@ interface DrawingScale {
 | 1/8" = 1' (US)     | 96      | `"in"` | `'1/8"=1\''` |
 
 > **Imperial `value`:** "1/4" = 1'" means 0.25 paper inches = 12 real inches → 1 paper inch = 48 real inches → `value: 48`.
+
+To include `paper`/`real` so the editor round-trips correctly:
+
+```typescript
+// 1/8" = 1'-0" with round-trip editor support
+const cvScale: DrawingScale = {
+  value: 96,
+  unit: "in",
+  label: '1/8"=1\'',
+  paper: { amount: "1/8", unit: "in" },
+  real:  { amount: "1", unit: "ft", inches: "0" },
+};
+```
 
 ### Usage
 
@@ -732,7 +756,7 @@ const cvScale: DrawingScale = { value: 100, unit: "mm", label: "1:100" };
   - Circle: `Column  ⌀0.60m`
   - Line: `Wall  4.25m`
 - **Status bar** shows the active scale and DPI: `Scale: 1:100 · 300 DPI`
-- **Edit button (✎)** next to the scale label opens an inline form — user types a new value and picks a unit, then presses Enter. `onDrawingScaleChange` fires with the corrected scale. This is the correction path when the CV engine extracts the wrong scale.
+- **Edit button (✎)** next to the scale label opens the scale editor. The editor shows **both sides** of the equality — paper measurement on the left, real-world measurement on the right. Both sides accept fraction notation (`1/8`) and architectural feet+inches (`1'-6"`). Press **Confirm** to apply, **Cancel** to close without change. `onDrawingScaleChange` fires with the corrected scale.
 - In `readonly` mode the edit button is hidden.
 
 ### Scale correction flow
@@ -777,7 +801,7 @@ The package does not do this itself — SSR gating is the consumer's responsibil
 
 export { AnnotationCanvas };                              // the main component
 export type { CanonicalAnnotation, LabelMap, SymbolSize, SymbolSizeUnit, ToolType }; // canonical types
-export type { DrawingScale };                             // drawing scale type (dpi + scale props)
+export type { DrawingScale, ScaleSideInput };             // drawing scale types
 export type { ThemeVars };                                // theme token interface
 export { DEFAULT_THEME };                                 // the default dark palette, useful as a base
 export { geo };                                           // coordinate math helpers for use in adapters
