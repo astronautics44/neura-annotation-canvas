@@ -898,9 +898,16 @@ export function AnnotationCanvas({
 
     const chip = chipVisible ? (
       <Group x={chipX} y={chipY}>
-        <Rect width={chipWidth} height={14 / scale} fill="rgba(0,0,0,0.65)" cornerRadius={3 / scale} />
-        <Circle x={6 / scale} y={7 / scale} radius={3 / scale} fill={color} />
-        <Text x={12 / scale} y={2 / scale} text={chipText} fontSize={11 / scale} fill={resolved.textPrimary} fontFamily="system-ui" />
+        <Rect
+          width={chipWidth}
+          height={18 / scale}
+          fill={hexToRgba(resolved.bgElevated, 0.9)}
+          stroke={hexToRgba(resolved.accent, 0.45)}
+          strokeWidth={1 / scale}
+          cornerRadius={4 / scale}
+        />
+        <Circle x={6 / scale} y={9 / scale} radius={3 / scale} fill={color} />
+        <Text x={12 / scale} y={3 / scale} text={chipText} fontSize={11 / scale} fill={resolved.textPrimary} fontFamily="system-ui" />
       </Group>
     ) : null;
 
