@@ -89,9 +89,13 @@ interface Props {
   theme?: Partial<ThemeVars>;
 }
 
+export type ScaleUnit = "mm" | "cm" | "m" | "in" | "ft";
+
 export interface DrawingScale {
-  value: number;
-  unit: "mm" | "cm" | "m" | "in" | "ft";
+  paperValue: number;
+  paperUnit: ScaleUnit;
+  realValue: number;
+  realUnit: ScaleUnit;
   label: string;
 }
 
@@ -183,30 +187,38 @@ export function AnnotationCanvas({
   const [drawingScale, setDrawingScale] = useState<DrawingScale | undefined>(drawingScaleProp);
   useEffect(() => { setDrawingScale(drawingScaleProp); }, [drawingScaleProp]);
   const [scaleEditing, setScaleEditing] = useState(false);
-  const [scaleEditValue, setScaleEditValue] = useState("");
-  const [scaleEditUnit, setScaleEditUnit] = useState<DrawingScale["unit"]>("mm");
+  const [scaleEditPaperValue, setScaleEditPaperValue] = useState("");
+  const [scaleEditPaperUnit, setScaleEditPaperUnit] = useState<ScaleUnit>("mm");
+  const [scaleEditRealValue, setScaleEditRealValue] = useState("");
+  const [scaleEditRealUnit, setScaleEditRealUnit] = useState<ScaleUnit>("mm");
 
-  // Compute real-world pixels-to-unit conversion: real units per pixel
+  // pixels → paper inches (÷ DPI) → paper in paperUnit → real in realUnit
+  const UNITS_PER_INCH: Record<ScaleUnit, number> = { mm: 25.4, cm: 2.54, m: 0.0254, in: 1, ft: 1 / 12 };
   const realUnitsPerPixel: number | null = (() => {
     if (!dpi || !drawingScale) return null;
-    // Paper unit depends on the chosen unit system:
-    // metric (mm/cm/m): 1 paper inch = 25.4 paper-mm; scale.value real-mm per paper-mm
-    // imperial (in/ft): 1 paper inch = 1 paper-inch; scale.value real-in per paper-inch
-    const isPaperInches = drawingScale.unit === "in" || drawingScale.unit === "ft";
-    const realUnitsPerPaperInch = isPaperInches
-      ? drawingScale.value                       // e.g. 48 real-in per paper-in
-      : drawingScale.value * 25.4;               // e.g. 100 * 25.4 = 2540 real-mm per paper-in
-    return realUnitsPerPaperInch / dpi;
+    return (1 / dpi) * UNITS_PER_INCH[drawingScale.paperUnit] * (drawingScale.realValue / drawingScale.paperValue);
   })();
 
   function formatDim(pixels: number): string {
     if (realUnitsPerPixel === null || !drawingScale) return "";
     let val = pixels * realUnitsPerPixel;
-    let unit = drawingScale.unit;
-    // Auto-convert to larger units for readability
+    let unit = drawingScale.realUnit;
     if (unit === "mm" && val >= 1000) { val /= 1000; unit = "m"; }
     else if (unit === "cm" && val >= 100) { val /= 100; unit = "m"; }
     else if (unit === "in" && val >= 12) { val /= 12; unit = "ft"; }
+    return `${val.toFixed(val < 10 ? 2 : 1)}${unit}`;
+  }
+
+  function formatArea(pixelsSq: number): string {
+    if (realUnitsPerPixel === null || !drawingScale) return "";
+    const areaSq = pixelsSq * realUnitsPerPixel * realUnitsPerPixel;
+    const ru = drawingScale.realUnit;
+    let val: number; let unit: string;
+    if (ru === "ft" || ru === "in") {
+      val = areaSq * (ru === "in" ? 1 / 144 : 1); unit = "ft²";
+    } else {
+      val = areaSq * (ru === "mm" ? 1e-6 : ru === "cm" ? 1e-4 : 1); unit = "m²";
+    }
     return `${val.toFixed(val < 10 ? 2 : 1)}${unit}`;
   }
 
@@ -922,10 +934,19 @@ export function AnnotationCanvas({
     if (realUnitsPerPixel !== null) {
       if (ann.type === "bbox") {
         const { w, h } = bboxToKonva(ann.points);
-        chipDim = ` ${formatDim(w)}×${formatDim(h)}`;
+        chipDim = ` ${formatDim(w)}×${formatDim(h)} ${formatArea(w * h)}`;
       } else if (ann.type === "circle") {
         const { w } = bboxToKonva(ann.points);
-        chipDim = ` ⌀${formatDim(w)}`;
+        chipDim = ` ⌀${formatDim(w)} ${formatArea(Math.PI * (w / 2) ** 2)}`;
+      } else if (ann.type === "polygon") {
+        const outerPts = ((ann.meta as ShapeMeta | undefined)?.rings?.[0] ?? ann.points) as [number, number][];
+        let area = 0;
+        for (let i = 0; i < outerPts.length; i++) {
+          const [x1, y1] = outerPts[i]!;
+          const [x2, y2] = outerPts[(i + 1) % outerPts.length]!;
+          area += x1 * y2 - x2 * y1;
+        }
+        chipDim = ` ${formatArea(Math.abs(area) / 2)}`;
       } else if (ann.type === "line") {
         const dx = ann.points[1]![0] - ann.points[0]![0];
         const dy = ann.points[1]![1] - ann.points[0]![1];
@@ -1344,8 +1365,10 @@ export function AnnotationCanvas({
               </span>
               {!readonly && (
                 <button title="Edit drawing scale" onClick={() => {
-                  setScaleEditValue(drawingScale?.value.toString() ?? "");
-                  setScaleEditUnit(drawingScale?.unit ?? "mm");
+                  setScaleEditPaperValue(drawingScale?.paperValue.toString() ?? "1");
+                  setScaleEditPaperUnit(drawingScale?.paperUnit ?? "mm");
+                  setScaleEditRealValue(drawingScale?.realValue.toString() ?? "");
+                  setScaleEditRealUnit(drawingScale?.realUnit ?? "mm");
                   setScaleEditing(true);
                 }} style={{ ...zoomBtnStyle, width: 16, height: 16 }}
                   onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--ae-bg-elevated)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-primary)"; }}
@@ -1359,30 +1382,45 @@ export function AnnotationCanvas({
             <form style={{ display: "flex", alignItems: "center", gap: 4, borderLeft: "1px solid var(--ae-border)", paddingLeft: 8 }}
               onSubmit={(e) => {
                 e.preventDefault();
-                const v = parseFloat(scaleEditValue);
-                if (!isNaN(v) && v > 0) {
-                  const isPaperInches = scaleEditUnit === "in" || scaleEditUnit === "ft";
-                  const label = isPaperInches
-                    ? `1"=${v}${scaleEditUnit}`
-                    : `1:${v}`;
-                  const next: DrawingScale = { value: v, unit: scaleEditUnit, label };
+                const pv = parseFloat(scaleEditPaperValue);
+                const rv = parseFloat(scaleEditRealValue);
+                if (!isNaN(pv) && pv > 0 && !isNaN(rv) && rv > 0) {
+                  const label = `${pv}${scaleEditPaperUnit}=${rv}${scaleEditRealUnit}`;
+                  const next: DrawingScale = { paperValue: pv, paperUnit: scaleEditPaperUnit, realValue: rv, realUnit: scaleEditRealUnit, label };
                   setDrawingScale(next);
                   onDrawingScaleChange?.(next);
                 }
                 setScaleEditing(false);
               }}>
-              <span style={{ color: "var(--ae-text-muted)", fontSize: 11 }}>1 paper unit =</span>
               <input
                 autoFocus
                 type="number"
                 min="0.001"
                 step="any"
-                value={scaleEditValue}
-                onChange={(e) => setScaleEditValue(e.target.value)}
+                value={scaleEditPaperValue}
+                onChange={(e) => setScaleEditPaperValue(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Escape") setScaleEditing(false); }}
-                style={{ width: 64, height: 18, background: "var(--ae-bg-elevated)", border: "1px solid var(--ae-accent)", borderRadius: 3, color: "var(--ae-text-primary)", fontSize: 11, padding: "0 4px", fontFamily: "'JetBrains Mono','Fira Code',monospace", outline: "none" }}
+                style={{ width: 44, height: 18, background: "var(--ae-bg-elevated)", border: "1px solid var(--ae-accent)", borderRadius: 3, color: "var(--ae-text-primary)", fontSize: 11, padding: "0 4px", fontFamily: "'JetBrains Mono','Fira Code',monospace", outline: "none" }}
               />
-              <select value={scaleEditUnit} onChange={(e) => setScaleEditUnit(e.target.value as DrawingScale["unit"])}
+              <select value={scaleEditPaperUnit} onChange={(e) => setScaleEditPaperUnit(e.target.value as ScaleUnit)}
+                style={{ height: 18, background: "var(--ae-bg-elevated)", border: "1px solid var(--ae-border)", borderRadius: 3, color: "var(--ae-text-primary)", fontSize: 11, outline: "none" }}>
+                <option value="mm">mm</option>
+                <option value="cm">cm</option>
+                <option value="m">m</option>
+                <option value="in">in</option>
+                <option value="ft">ft</option>
+              </select>
+              <span style={{ color: "var(--ae-text-muted)", fontSize: 11 }}>=</span>
+              <input
+                type="number"
+                min="0.001"
+                step="any"
+                value={scaleEditRealValue}
+                onChange={(e) => setScaleEditRealValue(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Escape") setScaleEditing(false); }}
+                style={{ width: 44, height: 18, background: "var(--ae-bg-elevated)", border: "1px solid var(--ae-accent)", borderRadius: 3, color: "var(--ae-text-primary)", fontSize: 11, padding: "0 4px", fontFamily: "'JetBrains Mono','Fira Code',monospace", outline: "none" }}
+              />
+              <select value={scaleEditRealUnit} onChange={(e) => setScaleEditRealUnit(e.target.value as ScaleUnit)}
                 style={{ height: 18, background: "var(--ae-bg-elevated)", border: "1px solid var(--ae-border)", borderRadius: 3, color: "var(--ae-text-primary)", fontSize: 11, outline: "none" }}>
                 <option value="mm">mm</option>
                 <option value="cm">cm</option>

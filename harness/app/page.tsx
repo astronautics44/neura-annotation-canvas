@@ -48,10 +48,10 @@ const lightTheme: Partial<ThemeVars> = {
 
 // Preset scales for the demo — covers metric and imperial conventions
 const SCALE_PRESETS: { label: string; scale: DrawingScale; dpi: number }[] = [
-  { label: "None", scale: { value: 1, unit: "mm", label: "—" }, dpi: 0 },
-  { label: "1:100 @ 300 DPI", scale: { value: 100, unit: "mm", label: "1:100" }, dpi: 300 },
-  { label: "1:50 @ 300 DPI",  scale: { value: 50,  unit: "mm", label: "1:50"  }, dpi: 300 },
-  { label: '1/4"=1\' @ 300 DPI', scale: { value: 48, unit: "in", label: '1/4"=1\'' }, dpi: 300 },
+  { label: "None", scale: { paperValue: 1, paperUnit: "mm", realValue: 1, realUnit: "mm", label: "—" }, dpi: 0 },
+  { label: "1:100 @ 300 DPI", scale: { paperValue: 1, paperUnit: "mm", realValue: 100, realUnit: "mm", label: "1mm=100mm" }, dpi: 300 },
+  { label: "1:50 @ 300 DPI",  scale: { paperValue: 1, paperUnit: "mm", realValue: 50,  realUnit: "mm", label: "1mm=50mm"  }, dpi: 300 },
+  { label: '1/4"=1\' @ 300 DPI', scale: { paperValue: 0.25, paperUnit: "in", realValue: 1, realUnit: "ft", label: '0.25in=1ft' }, dpi: 300 },
 ];
 
 type Engine = "A" | "B" | "C" | "D";
