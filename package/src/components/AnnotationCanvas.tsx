@@ -111,9 +111,39 @@ interface Props {
   /** Fires when the user edits the scale in the status bar. */
   onDrawingScaleChange?: (scale: DrawingScale) => void;
 
+  /**
+   * When provided, replaces the built-in label popover for newly drawn shapes.
+   * Resolve with label metadata to commit the shape, or null to cancel.
+   */
+  onPendingShapeCommit?: (context: {
+    geometryType: string;
+    phase: string;
+    position: { x: number; y: number };
+  }) => Promise<{
+    label: string;
+    symbolSize?: SymbolSize;
+    meta?: Record<string, unknown>;
+  } | null>;
+
   // --- layout ---
   className?: string;
   theme?: Partial<ThemeVars>;
+}
+
+const PENDING_SHAPE_PHASES = [
+  "bbox-pending",
+  "polygon-pending",
+  "polyline-pending",
+  "line-pending",
+  "point-pending",
+  "circle-pending",
+  "count-pending",
+] as const;
+
+type PendingShapePhase = (typeof PENDING_SHAPE_PHASES)[number];
+
+function isPendingShapePhase(phase: DrawState["phase"]): phase is PendingShapePhase {
+  return (PENDING_SHAPE_PHASES as readonly string[]).includes(phase);
 }
 
 export function AnnotationCanvas({
@@ -135,6 +165,7 @@ export function AnnotationCanvas({
   dpi,
   drawingScale: drawingScaleProp,
   onDrawingScaleChange,
+  onPendingShapeCommit,
   className,
   theme: themeProp,
 }: Props) {
@@ -228,11 +259,8 @@ export function AnnotationCanvas({
   }, [snapshot]);
 
   useEffect(() => {
-    // Suppress during active drag — mouseUp fires onChange once at gesture end
-    if (draggingAnnotation !== null || draggingHandle !== null || draggingVertex !== null) return;
     onChange?.(annotations);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [annotations, draggingAnnotation, draggingHandle, draggingVertex]);
+  }, [annotations]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     // Skip reloading when the incoming prop is the very array this component
@@ -783,6 +811,45 @@ export function AnnotationCanvas({
     setDraggingAnnotation({ id, startImg: getImagePos(e) });
   }, [tool, readonly, panMode, getImagePos, selectedIds, cloneAnnotations, snapshot]);
 
+  const commitPendingShape = useCallback((
+    pendingDraw: DrawState,
+    result: { label: string; symbolSize?: SymbolSize; meta?: Record<string, unknown> },
+  ) => {
+    const meta: Record<string, unknown> = { ...(result.meta ?? {}) };
+    if (result.symbolSize) meta.symbolSize = result.symbolSize;
+    const base = {
+      label: result.label,
+      source: "human" as const,
+      ...(Object.keys(meta).length > 0 ? { meta } : {}),
+    };
+
+    if (pendingDraw.phase === "bbox-pending") {
+      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "bbox", points: pendingDraw.points, ...base } });
+    } else if (pendingDraw.phase === "polygon-pending") {
+      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "polygon", points: pendingDraw.pts, ...base } });
+    } else if (pendingDraw.phase === "polyline-pending") {
+      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "polyline", points: pendingDraw.pts, ...base } });
+    } else if (pendingDraw.phase === "line-pending") {
+      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "line", points: pendingDraw.points, ...base } });
+    } else if (pendingDraw.phase === "point-pending") {
+      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "point", points: [pendingDraw.pt], ...base } });
+    } else if (pendingDraw.phase === "circle-pending") {
+      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "circle", points: pendingDraw.points, ...base } });
+    } else if (pendingDraw.phase === "count-pending") {
+      const pts = pendingDraw.pts;
+      snapshot();
+      dispatch({
+        type: "ADD_MANY",
+        payload: pts.map((pt) => ({
+          id: newId(),
+          type: "point" as const,
+          points: [pt] as [number, number][],
+          ...base,
+        })),
+      });
+    }
+  }, [dispatch, dispatchAndNotify, snapshot]);
+
   const handleLabelSelect = useCallback((label: string, symbolSize?: SymbolSize) => {
     const meta = symbolSize ? { symbolSize } : undefined;
     const base = { label, source: "human" as const, ...(meta ? { meta } : {}) };
@@ -805,6 +872,43 @@ export function AnnotationCanvas({
     }
     setDraw({ phase: "idle" });
   }, [draw, dispatchAndNotify, snapshot]);
+
+  const shapeCommitSessionRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!onPendingShapeCommit || !isPendingShapePhase(draw.phase)) {
+      if (!isPendingShapePhase(draw.phase)) {
+        shapeCommitSessionRef.current = null;
+      }
+      return;
+    }
+
+    const capturedDraw = draw;
+    const pos = (capturedDraw as { pos: [number, number] }).pos;
+    const sessionId = `${draw.phase}:${pos[0]},${pos[1]}`;
+    if (shapeCommitSessionRef.current === sessionId) return;
+    shapeCommitSessionRef.current = sessionId;
+
+    const phase = capturedDraw.phase;
+    const geometryType = phase.replace(/-pending$/, "");
+
+    void onPendingShapeCommit({
+      geometryType,
+      phase,
+      position: { x: pos[0], y: pos[1] },
+    }).then((result) => {
+      shapeCommitSessionRef.current = null;
+      if (!isPendingShapePhase(phase) || capturedDraw.phase !== phase) return;
+
+      if (!result) {
+        setDraw({ phase: "idle" });
+        return;
+      }
+
+      commitPendingShape(capturedDraw, result);
+      setDraw({ phase: "idle" });
+    });
+  }, [draw, onPendingShapeCommit, commitPendingShape]);
 
   const applyRelabel = useCallback((annId: string, label: string, symbolSize?: SymbolSize) => {
     const ann = annotations.find((a) => a.id === annId);
@@ -1332,10 +1436,8 @@ export function AnnotationCanvas({
             onWheel={handleWheel}
             listening={true}
           >
-            <Layer listening={false}>
-              {img && <KonvaImage image={img} x={0} y={0} width={img.width} height={img.height} name="bg-image" />}
-            </Layer>
             <Layer>
+              {img && <KonvaImage image={img} x={0} y={0} width={img.width} height={img.height} name="bg-image" />}
               {annotations.map(renderAnnotation)}
               {renderDraw()}
             </Layer>
@@ -1353,7 +1455,7 @@ export function AnnotationCanvas({
               </button>
             </div>
           )}
-          {pPos && (
+          {pPos && !onPendingShapeCommit && (
             <LabelPopover
               labels={labels}
               position={pPos}
