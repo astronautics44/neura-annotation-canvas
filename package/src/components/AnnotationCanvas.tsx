@@ -16,6 +16,9 @@ import type { ThemeVars } from "../theme";
 import { resolveTheme, themeToCssVars } from "../theme";
 import { newId } from "../utils/ids";
 import { formatSymbolSize, parseSymbolSize } from "../utils/symbolSize";
+import { formatAnnotationCalculatedSize } from "../utils/dimensions";
+import type { DrawingScale } from "../utils/drawingScale";
+import { DrawingScaleEditor } from "./DrawingScaleEditor";
 import { Toolbar } from "./Toolbar";
 import { LabelPanel } from "./LabelPanel";
 import { LabelPopover } from "./LabelPopover";
@@ -39,6 +42,8 @@ import {
   hexToRgba, bboxToKonva, screenToImage, centroid,
   bboxHandles, slugify, annotationReducer, getAnnotationBounds, boxesIntersect,
 } from "./canvasHelpers";
+
+export type { DrawingScale } from "../utils/drawingScale";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -88,17 +93,6 @@ interface Props {
   className?: string;
   theme?: Partial<ThemeVars>;
 }
-
-export interface DrawingScale {
-  value: number;
-  unit: "mm" | "cm" | "m" | "in" | "ft";
-  label: string;
-}
-
-
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
 
 export function AnnotationCanvas({
   image,
@@ -183,32 +177,6 @@ export function AnnotationCanvas({
   const [drawingScale, setDrawingScale] = useState<DrawingScale | undefined>(drawingScaleProp);
   useEffect(() => { setDrawingScale(drawingScaleProp); }, [drawingScaleProp]);
   const [scaleEditing, setScaleEditing] = useState(false);
-  const [scaleEditValue, setScaleEditValue] = useState("");
-  const [scaleEditUnit, setScaleEditUnit] = useState<DrawingScale["unit"]>("mm");
-
-  // Compute real-world pixels-to-unit conversion: real units per pixel
-  const realUnitsPerPixel: number | null = (() => {
-    if (!dpi || !drawingScale) return null;
-    // Paper unit depends on the chosen unit system:
-    // metric (mm/cm/m): 1 paper inch = 25.4 paper-mm; scale.value real-mm per paper-mm
-    // imperial (in/ft): 1 paper inch = 1 paper-inch; scale.value real-in per paper-inch
-    const isPaperInches = drawingScale.unit === "in" || drawingScale.unit === "ft";
-    const realUnitsPerPaperInch = isPaperInches
-      ? drawingScale.value                       // e.g. 48 real-in per paper-in
-      : drawingScale.value * 25.4;               // e.g. 100 * 25.4 = 2540 real-mm per paper-in
-    return realUnitsPerPaperInch / dpi;
-  })();
-
-  function formatDim(pixels: number): string {
-    if (realUnitsPerPixel === null || !drawingScale) return "";
-    let val = pixels * realUnitsPerPixel;
-    let unit = drawingScale.unit;
-    // Auto-convert to larger units for readability
-    if (unit === "mm" && val >= 1000) { val /= 1000; unit = "m"; }
-    else if (unit === "cm" && val >= 100) { val /= 100; unit = "m"; }
-    else if (unit === "in" && val >= 12) { val /= 12; unit = "ft"; }
-    return `${val.toFixed(val < 10 ? 2 : 1)}${unit}`;
-  }
 
   // Internal clipboard — stores copied annotations for Ctrl+C / Ctrl+V
   const [clipboard, setClipboard] = useState<CanonicalAnnotation[]>([]);
@@ -794,6 +762,11 @@ export function AnnotationCanvas({
 
   const pPos = popoverPos();
 
+  const dimensionContext =
+    dpi !== undefined && drawingScale
+      ? { dpi, drawingScale }
+      : undefined;
+
   // Screen position for the relabel popover — top-left corner of the annotation
   const relabelPos = (() => {
     if (!relabelId) return null;
@@ -916,30 +889,8 @@ export function AnnotationCanvas({
     const chipConf = ann.confidence !== undefined ? ` ${Math.round(ann.confidence * 100)}%` : "";
     const symbolSize = parseSymbolSize(ann.meta);
     const chipSymbolSize = symbolSize ? ` ${formatSymbolSize(symbolSize)}` : "";
-
-    // Real-world dimensions appended to chip when scale is configured
-    let chipDim = "";
-    if (realUnitsPerPixel !== null) {
-      if (ann.type === "bbox") {
-        const { w, h } = bboxToKonva(ann.points);
-        chipDim = ` ${formatDim(w)}×${formatDim(h)}`;
-      } else if (ann.type === "circle") {
-        const { w } = bboxToKonva(ann.points);
-        chipDim = ` ⌀${formatDim(w)}`;
-      } else if (ann.type === "line") {
-        const dx = ann.points[1]![0] - ann.points[0]![0];
-        const dy = ann.points[1]![1] - ann.points[0]![1];
-        chipDim = ` ${formatDim(Math.hypot(dx, dy))}`;
-      } else if (ann.type === "polyline") {
-        let length = 0;
-        for (let i = 1; i < ann.points.length; i++) {
-          const prev = ann.points[i - 1]!;
-          const cur = ann.points[i]!;
-          length += Math.hypot(cur[0] - prev[0], cur[1] - prev[1]);
-        }
-        chipDim = ` ${formatDim(length)}`;
-      }
-    }
+    const calculatedSize = formatAnnotationCalculatedSize(ann, dpi, drawingScale);
+    const chipDim = calculatedSize ? ` ${calculatedSize}` : "";
 
     const chipText = chipLabel + chipConf + chipSymbolSize + chipDim;
     // 8px per char is a safe overestimate for mixed system-ui + monospace content
@@ -947,9 +898,16 @@ export function AnnotationCanvas({
 
     const chip = chipVisible ? (
       <Group x={chipX} y={chipY}>
-        <Rect width={chipWidth} height={14 / scale} fill="rgba(0,0,0,0.65)" cornerRadius={3 / scale} />
-        <Circle x={6 / scale} y={7 / scale} radius={3 / scale} fill={color} />
-        <Text x={12 / scale} y={2 / scale} text={chipText} fontSize={11 / scale} fill={resolved.textPrimary} fontFamily="system-ui" />
+        <Rect
+          width={chipWidth}
+          height={18 / scale}
+          fill={hexToRgba(resolved.bgElevated, 0.9)}
+          stroke={hexToRgba(resolved.accent, 0.45)}
+          strokeWidth={1 / scale}
+          cornerRadius={4 / scale}
+        />
+        <Circle x={6 / scale} y={9 / scale} radius={3 / scale} fill={color} />
+        <Text x={12 / scale} y={3 / scale} text={chipText} fontSize={11 / scale} fill={resolved.textPrimary} fontFamily="system-ui" />
       </Group>
     ) : null;
 
@@ -1273,6 +1231,7 @@ export function AnnotationCanvas({
           labels={labels}
           selectedIds={selectedIds}
           readonly={readonly}
+          {...(dimensionContext ? { dimensionContext } : {})}
           onCreateLabel={readonly ? undefined : handleCreateLabel}
           width={resolved.panelWidth}
           height={containerSize.h}
@@ -1343,11 +1302,7 @@ export function AnnotationCanvas({
                 {dpi ? ` · ${dpi} DPI` : ""}
               </span>
               {!readonly && (
-                <button title="Edit drawing scale" onClick={() => {
-                  setScaleEditValue(drawingScale?.value.toString() ?? "");
-                  setScaleEditUnit(drawingScale?.unit ?? "mm");
-                  setScaleEditing(true);
-                }} style={{ ...zoomBtnStyle, width: 16, height: 16 }}
+                <button title="Edit drawing scale" onClick={() => setScaleEditing(true)} style={{ ...zoomBtnStyle, width: 16, height: 16 }}
                   onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--ae-bg-elevated)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-primary)"; }}
                   onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-secondary)"; }}>
                   <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 2a2.12 2.12 0 0 1 3 3L5 14l-4 1 1-4Z"/></svg>
@@ -1356,51 +1311,15 @@ export function AnnotationCanvas({
             </div>
           )}
           {scaleEditing && (
-            <form style={{ display: "flex", alignItems: "center", gap: 4, borderLeft: "1px solid var(--ae-border)", paddingLeft: 8 }}
-              onSubmit={(e) => {
-                e.preventDefault();
-                const v = parseFloat(scaleEditValue);
-                if (!isNaN(v) && v > 0) {
-                  const isPaperInches = scaleEditUnit === "in" || scaleEditUnit === "ft";
-                  const label = isPaperInches
-                    ? `1"=${v}${scaleEditUnit}`
-                    : `1:${v}`;
-                  const next: DrawingScale = { value: v, unit: scaleEditUnit, label };
-                  setDrawingScale(next);
-                  onDrawingScaleChange?.(next);
-                }
+            <DrawingScaleEditor
+              initialScale={drawingScale}
+              onConfirm={(next) => {
+                setDrawingScale(next);
+                onDrawingScaleChange?.(next);
                 setScaleEditing(false);
-              }}>
-              <span style={{ color: "var(--ae-text-muted)", fontSize: 11 }}>1 paper unit =</span>
-              <input
-                autoFocus
-                type="number"
-                min="0.001"
-                step="any"
-                value={scaleEditValue}
-                onChange={(e) => setScaleEditValue(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Escape") setScaleEditing(false); }}
-                style={{ width: 64, height: 18, background: "var(--ae-bg-elevated)", border: "1px solid var(--ae-accent)", borderRadius: 3, color: "var(--ae-text-primary)", fontSize: 11, padding: "0 4px", fontFamily: "'JetBrains Mono','Fira Code',monospace", outline: "none" }}
-              />
-              <select value={scaleEditUnit} onChange={(e) => setScaleEditUnit(e.target.value as DrawingScale["unit"])}
-                style={{ height: 18, background: "var(--ae-bg-elevated)", border: "1px solid var(--ae-border)", borderRadius: 3, color: "var(--ae-text-primary)", fontSize: 11, outline: "none" }}>
-                <option value="mm">mm</option>
-                <option value="cm">cm</option>
-                <option value="m">m</option>
-                <option value="in">in</option>
-                <option value="ft">ft</option>
-              </select>
-              <button type="submit" style={{ ...zoomBtnStyle, width: 18, height: 18, color: "var(--ae-success)" }}
-                onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--ae-bg-elevated)"; }}
-                onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}>
-                <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="2 8 6 12 14 4"/></svg>
-              </button>
-              <button type="button" onClick={() => setScaleEditing(false)} style={{ ...zoomBtnStyle, width: 18, height: 18, color: "var(--ae-danger)" }}
-                onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--ae-bg-elevated)"; }}
-                onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}>
-                <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="2" y1="2" x2="14" y2="14"/><line x1="14" y1="2" x2="2" y2="14"/></svg>
-              </button>
-            </form>
+              }}
+              onCancel={() => setScaleEditing(false)}
+            />
           )}
         </div>
 

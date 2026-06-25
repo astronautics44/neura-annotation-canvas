@@ -47,7 +47,7 @@ export const DEFAULT_THEME: ThemeVars = {
   handleFill: "#ffffff",
   selection: "rgba(37,99,235,0.15)",
   toolbarWidth: 48,
-  panelWidth: 220,
+  panelWidth: 260,
   statusBarHeight: 28,
 };
 

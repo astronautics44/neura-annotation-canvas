@@ -25,7 +25,8 @@ const AnnotationCanvas = dynamic(
   { ssr: false },
 );
 
-const FLOOR_PLAN_URL = "/construction_drawing.png";
+// Sheet A-200A "ADMIN ELEVATIONS" rendered at 300 DPI → 10800×7200 px (36"×24" ARCH-D sheet)
+const FLOOR_PLAN_URL = "/admin-elevations-p5.png";
 
 // Light / white theme for the harness
 const lightTheme: Partial<ThemeVars> = {
@@ -46,12 +47,20 @@ const lightTheme: Partial<ThemeVars> = {
   selection: "rgba(37,99,235,0.12)",
 };
 
-// Preset scales for the demo — covers metric and imperial conventions
+// Preset scales — A-200A sheet (300 DPI) + generic fallbacks
+// Imperial value = real-in per paper-in. paper/real fields enable round-trip editing.
 const SCALE_PRESETS: { label: string; scale: DrawingScale; dpi: number }[] = [
   { label: "None", scale: { value: 1, unit: "mm", label: "—" }, dpi: 0 },
-  { label: "1:100 @ 300 DPI", scale: { value: 100, unit: "mm", label: "1:100" }, dpi: 300 },
-  { label: "1:50 @ 300 DPI",  scale: { value: 50,  unit: "mm", label: "1:50"  }, dpi: 300 },
-  { label: '1/4"=1\' @ 300 DPI', scale: { value: 48, unit: "in", label: '1/4"=1\'' }, dpi: 300 },
+  // Title block reads 1/8"=1'-0" → 1 paper-in = 8 real-ft = 96 real-in
+  { label: 'A-200A  1/8"=1\'-0" (title block) @ 300 DPI',
+    scale: { value: 96, unit: "in", label: '1/8"=1\'', paper: { amount: "1/8", unit: "in" }, real: { amount: "1", unit: "ft", inches: "0" } }, dpi: 300 },
+  // Cross-checked against datum lines (134'→150' = 16 ft over ~545 px)
+  { label: 'A-200A  1"=8.8\' (measured) @ 300 DPI',
+    scale: { value: 105.6, unit: "in", label: '1"=8.8\'', paper: { amount: "1", unit: "in" }, real: { amount: "8.8", unit: "ft", inches: "0" } }, dpi: 300 },
+  { label: "1:100 @ 300 DPI",
+    scale: { value: 100, unit: "mm", label: "1:100", paper: { amount: "1", unit: "mm" }, real: { amount: "100", unit: "mm" } }, dpi: 300 },
+  { label: '1/4"=1\' @ 300 DPI',
+    scale: { value: 48, unit: "in", label: '1/4"=1\'', paper: { amount: "1/4", unit: "in" }, real: { amount: "1", unit: "ft", inches: "0" } }, dpi: 300 },
 ];
 
 type Engine = "A" | "B" | "C" | "D";
@@ -72,7 +81,7 @@ function getAnnotations(engine: Engine): CanonicalAnnotation[] {
 export default function Page() {
   const [engine, setEngine] = useState<Engine>("A");
   const [labels, setLabels] = useState(labelRegistry);
-  const [scalePreset, setScalePreset] = useState(0); // index into SCALE_PRESETS
+  const [scalePreset, setScalePreset] = useState(1); // default: A-200A title block scale
   const activePreset = SCALE_PRESETS[scalePreset]!;
   const annotations = getAnnotations(engine);
 

@@ -29,6 +29,16 @@ export function parseSymbolSize(meta?: Record<string, unknown>): SymbolSize | un
 }
 
 export function formatSymbolSize(size: SymbolSize): string {
-  const val = size.value % 1 === 0 ? size.value.toString() : size.value.toFixed(2).replace(/\.?0+$/, "");
+  const val = formatSymbolSizeValue(size.value);
   return `${size.attribute} ${val}${size.unit}`;
+}
+
+/** Panel display: `diameter - 12mm` */
+export function formatSymbolSizeLabel(size: SymbolSize): string {
+  const val = formatSymbolSizeValue(size.value);
+  return `${size.attribute} - ${val}${size.unit}`;
+}
+
+function formatSymbolSizeValue(value: number): string {
+  return value % 1 === 0 ? value.toString() : value.toFixed(2).replace(/\.?0+$/, "");
 }
