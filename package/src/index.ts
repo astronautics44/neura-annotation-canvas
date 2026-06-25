@@ -3,4 +3,4 @@ export type { CanonicalAnnotation, LabelMap, SymbolSize, SymbolSizeUnit, ToolTyp
 export type { ThemeVars } from "./theme";
 export { DEFAULT_THEME } from "./theme";
 export { geo } from "./utils/geometry";
-export type { DrawingScale } from "./components/AnnotationCanvas";
+export type { DrawingScale, ScaleSideInput } from "./utils/drawingScale";

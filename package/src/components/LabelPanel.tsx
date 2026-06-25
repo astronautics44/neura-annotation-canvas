@@ -3,7 +3,11 @@
 import React, { useState, useMemo } from "react";
 import type { CanonicalAnnotation, LabelMap, SymbolSize } from "../types/canonical";
 import { LabelPopover } from "./LabelPopover";
-import { formatSymbolSize, parseSymbolSize } from "../utils/symbolSize";
+import { formatSymbolSizeLabel, parseSymbolSize } from "../utils/symbolSize";
+import {
+  formatAnnotationCalculatedSize,
+  type DrawingScaleInput,
+} from "../utils/dimensions";
 
 interface Props {
   annotations: CanonicalAnnotation[];
@@ -17,6 +21,8 @@ interface Props {
   readonly?: boolean;
   width?: number;
   height?: number;
+  /** When both dpi and drawing scale are set, calculated sizes appear in the list. */
+  dimensionContext?: { dpi: number; drawingScale: DrawingScaleInput };
 }
 
 export function LabelPanel({
@@ -31,6 +37,7 @@ export function LabelPanel({
   readonly = false,
   width = 220,
   height,
+  dimensionContext,
 }: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
@@ -332,150 +339,22 @@ export function LabelPanel({
 
               {/* Rows */}
               {!isCollapsed &&
-                items.map((ann) => {
-                  const isSelected = selectedIds.includes(ann.id);
-                  const isHovered = hoveredRow === ann.id;
-                  const symbolSize = parseSymbolSize(ann.meta);
-                  return (
-                    <div
-                      key={ann.id}
-                      onClick={(e) =>
-                        onSelect(
-                          ann.id,
-                          e.shiftKey || e.metaKey || e.ctrlKey,
-                        )
-                      }
-                      onMouseEnter={() => setHoveredRow(ann.id)}
-                      onMouseLeave={() => setHoveredRow(null)}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 5,
-                        padding: "4px 8px 4px 24px",
-                        cursor: "pointer",
-                        background: isSelected
-                          ? "var(--ae-selection)"
-                          : isHovered
-                          ? "var(--ae-bg-elevated)"
-                          : "transparent",
-                        borderLeft: isSelected
-                          ? "2px solid var(--ae-accent)"
-                          : "2px solid transparent",
-                        transition: "background 0.08s",
-                        minHeight: 26,
-                      }}
-                    >
-                      {/* ID */}
-                      <span
-                        style={{
-                          flex: 1,
-                          fontSize: 11,
-                          color: isSelected
-                            ? "var(--ae-text-primary)"
-                            : "var(--ae-text-secondary)",
-                          fontFamily: "'JetBrains Mono','Fira Code',monospace",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        #{shortId(ann.id)}
-                      </span>
-
-                      {/* Type pill */}
-                      <span
-                        style={{
-                          fontSize: 10,
-                          color: "var(--ae-text-muted)",
-                          flexShrink: 0,
-                        }}
-                      >
-                        {ann.type}
-                      </span>
-
-                      {symbolSize && (
-                        <span
-                          title={formatSymbolSize(symbolSize)}
-                          style={{
-                            fontSize: 9,
-                            color: "var(--ae-text-secondary)",
-                            fontFamily: "'JetBrains Mono','Fira Code',monospace",
-                            flexShrink: 0,
-                            maxWidth: 72,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {formatSymbolSize(symbolSize)}
-                        </span>
-                      )}
-
-                      {/* Source badge */}
-                      <span
-                        style={{
-                          fontSize: 9,
-                          borderRadius: 3,
-                          padding: "1px 4px",
-                          background:
-                            ann.source === "human"
-                              ? "rgba(99,102,241,0.18)"
-                              : "var(--ae-bg-elevated)",
-                          color:
-                            ann.source === "human"
-                              ? "#a5b4fc"
-                              : "var(--ae-text-muted)",
-                          border: `1px solid ${
-                            ann.source === "human"
-                              ? "rgba(99,102,241,0.3)"
-                              : "var(--ae-border)"
-                          }`,
-                          flexShrink: 0,
-                          lineHeight: "14px",
-                        }}
-                      >
-                        {ann.source === "human" ? "H" : "AI"}
-                      </span>
-
-                      {/* Hover actions */}
-                      {isHovered && !readonly && (
-                        <div
-                          style={{ display: "flex", gap: 2, flexShrink: 0 }}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <button
-                            title="Relabel"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const rect = e.currentTarget.getBoundingClientRect();
-                              setRelabelTarget({
-                                id: ann.id,
-                                pos: { x: rect.left - 200, y: rect.top },
-                              });
-                            }}
-                            style={actionBtn}
-                          >
-                            <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
-                              <path d="M11.5 2.5a2.121 2.121 0 013 3L5 15H2v-3L11.5 2.5z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-                            </svg>
-                          </button>
-                          <button
-                            title="Delete"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onDelete(ann.id);
-                            }}
-                            style={{ ...actionBtn, color: "var(--ae-danger)" }}
-                          >
-                            <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
-                              <path d="M3 4h10M6 4V2h4v2M5 4l1 9h4l1-9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                items.map((ann) => (
+                  <AnnotationRow
+                    key={ann.id}
+                    ann={ann}
+                    isSelected={selectedIds.includes(ann.id)}
+                    isHovered={hoveredRow === ann.id}
+                    readonly={readonly}
+                    {...(dimensionContext ? { dimensionContext } : {})}
+                    shortId={shortId}
+                    onSelect={onSelect}
+                    onDelete={onDelete}
+                    onRelabelRequest={(id, pos) => setRelabelTarget({ id, pos })}
+                    onMouseEnter={() => setHoveredRow(ann.id)}
+                    onMouseLeave={() => setHoveredRow(null)}
+                  />
+                ))}
             </div>
           );
         })}
@@ -500,29 +379,21 @@ export function LabelPanel({
               Unknown label ({ungrouped.length})
             </div>
             {ungrouped.map((ann) => (
-              <div
+              <AnnotationRow
                 key={ann.id}
-                onClick={(e) =>
-                  onSelect(
-                    ann.id,
-                    e.shiftKey || e.metaKey || e.ctrlKey,
-                  )
-                }
-                style={{
-                  padding: "4px 12px",
-                  fontSize: 11,
-                  color: "var(--ae-text-muted)",
-                  cursor: "pointer",
-                  background:
-                    selectedIds.includes(ann.id) ? "var(--ae-selection)" : "transparent",
-                  borderLeft:
-                    selectedIds.includes(ann.id)
-                      ? "2px solid var(--ae-accent)"
-                      : "2px solid transparent",
-                }}
-              >
-                #{shortId(ann.id)}
-              </div>
+                ann={ann}
+                isSelected={selectedIds.includes(ann.id)}
+                isHovered={hoveredRow === ann.id}
+                readonly={readonly}
+                {...(dimensionContext ? { dimensionContext } : {})}
+                shortId={shortId}
+                onSelect={onSelect}
+                onDelete={onDelete}
+                onRelabelRequest={(id, pos) => setRelabelTarget({ id, pos })}
+                onMouseEnter={() => setHoveredRow(ann.id)}
+                onMouseLeave={() => setHoveredRow(null)}
+                indent={12}
+              />
             ))}
           </div>
         )}
@@ -548,6 +419,184 @@ export function LabelPanel({
           />
         );
       })()}
+    </div>
+  );
+}
+
+interface AnnotationRowProps {
+  ann: CanonicalAnnotation;
+  isSelected: boolean;
+  isHovered: boolean;
+  readonly: boolean;
+  dimensionContext?: { dpi: number; drawingScale: DrawingScaleInput };
+  shortId: (id: string) => string;
+  onSelect: (id: string, additive: boolean) => void;
+  onDelete: (id: string) => void;
+  onRelabelRequest: (id: string, pos: { x: number; y: number }) => void;
+  onMouseEnter: () => void;
+  onMouseLeave: () => void;
+  indent?: number;
+}
+
+function AnnotationRow({
+  ann,
+  isSelected,
+  isHovered,
+  readonly,
+  dimensionContext,
+  shortId,
+  onSelect,
+  onDelete,
+  onRelabelRequest,
+  onMouseEnter,
+  onMouseLeave,
+  indent = 24,
+}: AnnotationRowProps) {
+  const symbolSize = parseSymbolSize(ann.meta);
+  const calculatedSize = dimensionContext
+    ? formatAnnotationCalculatedSize(
+        ann,
+        dimensionContext.dpi,
+        dimensionContext.drawingScale,
+      )
+    : "";
+  const hasSizes = Boolean(symbolSize || calculatedSize);
+
+  return (
+    <div
+      onClick={(e) =>
+        onSelect(ann.id, e.shiftKey || e.metaKey || e.ctrlKey)
+      }
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 3,
+        padding: `5px 8px 5px ${indent}px`,
+        cursor: "pointer",
+        background: isSelected
+          ? "var(--ae-selection)"
+          : isHovered
+          ? "var(--ae-bg-elevated)"
+          : "transparent",
+        borderLeft: isSelected
+          ? "2px solid var(--ae-accent)"
+          : "2px solid transparent",
+        transition: "background 0.08s",
+        minHeight: hasSizes ? (symbolSize && calculatedSize ? 54 : 42) : 28,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          minWidth: 0,
+        }}
+      >
+        <span
+          style={{
+            flex: 1,
+            minWidth: 0,
+            fontSize: 11,
+            color: isSelected
+              ? "var(--ae-text-primary)"
+              : "var(--ae-text-secondary)",
+            fontFamily: "'JetBrains Mono','Fira Code',monospace",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          #{shortId(ann.id)}
+        </span>
+
+        <span
+          style={{
+            fontSize: 10,
+            color: "var(--ae-text-muted)",
+            flexShrink: 0,
+          }}
+        >
+          {ann.type}
+        </span>
+
+        <span
+          style={{
+            fontSize: 9,
+            borderRadius: 3,
+            padding: "1px 4px",
+            background:
+              ann.source === "human"
+                ? "rgba(99,102,241,0.18)"
+                : "var(--ae-bg-elevated)",
+            color:
+              ann.source === "human"
+                ? "#a5b4fc"
+                : "var(--ae-text-muted)",
+            border: `1px solid ${
+              ann.source === "human"
+                ? "rgba(99,102,241,0.3)"
+                : "var(--ae-border)"
+            }`,
+            flexShrink: 0,
+            lineHeight: "14px",
+          }}
+        >
+          {ann.source === "human" ? "H" : "AI"}
+        </span>
+
+        {isHovered && !readonly && (
+          <div
+            style={{ display: "flex", gap: 2, flexShrink: 0 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              title="Relabel"
+              onClick={(e) => {
+                e.stopPropagation();
+                const rect = e.currentTarget.getBoundingClientRect();
+                onRelabelRequest(ann.id, { x: rect.left - 200, y: rect.top });
+              }}
+              style={actionBtn}
+            >
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
+                <path d="M11.5 2.5a2.121 2.121 0 013 3L5 15H2v-3L11.5 2.5z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+              </svg>
+            </button>
+            <button
+              title="Delete"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(ann.id);
+              }}
+              style={{ ...actionBtn, color: "var(--ae-danger)" }}
+            >
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
+                <path d="M3 4h10M6 4V2h4v2M5 4l1 9h4l1-9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {(calculatedSize || symbolSize) && (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+            fontSize: 11,
+            fontFamily: "'JetBrains Mono','Fira Code',monospace",
+            color: "var(--ae-text-primary)",
+            lineHeight: 1.4,
+          }}
+        >
+          {calculatedSize && <span>{calculatedSize}</span>}
+          {symbolSize && <span>{formatSymbolSizeLabel(symbolSize)}</span>}
+        </div>
+      )}
     </div>
   );
 }
