@@ -718,6 +718,7 @@ Appears after completing a draw gesture (or when relabeling). Supports:
 Shows all annotations grouped by label. Features:
 
 - Click an annotation row to select it on canvas (auto-pans if out of view)
+- **Selecting an annotation on canvas auto-scrolls the panel to that row and highlights it** — collapsed groups are automatically expanded
 - Click a group header to collapse/expand
 - Hover a row to reveal relabel (✎) and delete (✕) actions
 - Each annotation shows an `H` badge (human-created) or `AI` badge (engine output)

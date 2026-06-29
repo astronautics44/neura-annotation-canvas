@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import type { CanonicalAnnotation, LabelMap, SymbolSize } from "../types/canonical";
 import { LabelPopover } from "./LabelPopover";
 import { formatSymbolSizeLabel, parseSymbolSize } from "../utils/symbolSize";
@@ -41,6 +41,27 @@ export function LabelPanel({
 }: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // When canvas selection changes: auto-expand group + scroll row into view
+  useEffect(() => {
+    if (selectedIds.length === 0) return;
+    const firstId = selectedIds[0]!;
+    const ann = annotations.find((a) => a.id === firstId);
+    if (ann) {
+      setCollapsed((prev) => {
+        if (!prev.has(ann.label)) return prev;
+        const next = new Set(prev);
+        next.delete(ann.label);
+        return next;
+      });
+    }
+    // Defer scroll until after possible group-expansion re-render
+    setTimeout(() => {
+      const el = listRef.current?.querySelector<HTMLElement>(`[data-ann-id="${firstId}"]`);
+      el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }, 0);
+  }, [selectedIds]); // eslint-disable-line react-hooks/exhaustive-deps
   const [query, setQuery] = useState("");
   const [relabelTarget, setRelabelTarget] = useState<{
     id: string;
@@ -240,6 +261,7 @@ export function LabelPanel({
 
       {/* ── Scrollable list ── */}
       <div
+        ref={listRef}
         style={{
           flex: 1,
           overflowY: "auto",
@@ -464,6 +486,7 @@ function AnnotationRow({
 
   return (
     <div
+      data-ann-id={ann.id}
       onClick={(e) =>
         onSelect(ann.id, e.shiftKey || e.metaKey || e.ctrlKey)
       }
