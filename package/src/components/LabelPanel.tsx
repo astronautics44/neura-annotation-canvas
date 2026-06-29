@@ -64,12 +64,20 @@ export function LabelPanel({
       raf2 = requestAnimationFrame(() => {
         const container = listRef.current;
         const el = container?.querySelector<HTMLElement>(`[data-ann-id="${firstId}"]`);
-        if (!container || !el) return;
-        const cRect = container.getBoundingClientRect();
-        const eRect = el.getBoundingClientRect();
-        const delta =
-          eRect.top - cRect.top - (container.clientHeight / 2 - eRect.height / 2);
-        container.scrollBy({ top: delta, behavior: "smooth" });
+        if (!el) return;
+        // If our own list is the scroll container, scroll only it (avoids
+        // scrolling the host page when the canvas is embedded). Otherwise the
+        // host bounds the height a different way — fall back to scrollIntoView,
+        // which walks up to whatever ancestor actually scrolls.
+        if (container && container.scrollHeight > container.clientHeight + 1) {
+          const cRect = container.getBoundingClientRect();
+          const eRect = el.getBoundingClientRect();
+          const delta =
+            eRect.top - cRect.top - (container.clientHeight / 2 - eRect.height / 2);
+          container.scrollBy({ top: delta, behavior: "smooth" });
+        } else {
+          el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }
       });
     });
     return () => {
