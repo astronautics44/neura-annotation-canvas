@@ -59,7 +59,7 @@ export function LabelPanel({
     // Defer scroll until after possible group-expansion re-render
     setTimeout(() => {
       const el = listRef.current?.querySelector<HTMLElement>(`[data-ann-id="${firstId}"]`);
-      el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      el?.scrollIntoView({ block: "center", behavior: "smooth" });
     }, 0);
   }, [selectedIds]); // eslint-disable-line react-hooks/exhaustive-deps
   const [query, setQuery] = useState("");
