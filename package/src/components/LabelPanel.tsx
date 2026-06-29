@@ -56,11 +56,26 @@ export function LabelPanel({
         return next;
       });
     }
-    // Defer scroll until after possible group-expansion re-render
-    setTimeout(() => {
-      const el = listRef.current?.querySelector<HTMLElement>(`[data-ann-id="${firstId}"]`);
-      el?.scrollIntoView({ block: "center", behavior: "smooth" });
-    }, 0);
+    // Scroll the list container itself (not via scrollIntoView, which also
+    // scrolls outer page ancestors when the canvas is embedded). Two rAFs so
+    // the row exists after any group-expansion re-render + layout.
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        const container = listRef.current;
+        const el = container?.querySelector<HTMLElement>(`[data-ann-id="${firstId}"]`);
+        if (!container || !el) return;
+        const cRect = container.getBoundingClientRect();
+        const eRect = el.getBoundingClientRect();
+        const delta =
+          eRect.top - cRect.top - (container.clientHeight / 2 - eRect.height / 2);
+        container.scrollBy({ top: delta, behavior: "smooth" });
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2) cancelAnimationFrame(raf2);
+    };
   }, [selectedIds]); // eslint-disable-line react-hooks/exhaustive-deps
   const [query, setQuery] = useState("");
   const [relabelTarget, setRelabelTarget] = useState<{
