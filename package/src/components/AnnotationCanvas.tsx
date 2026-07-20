@@ -39,7 +39,7 @@ import {
   type DrawState, type Action,
 } from "./canvasConstants";
 import {
-  hexToRgba, bboxToKonva, screenToImage, centroid,
+  hexToRgba, bboxToKonva, screenToImage, centroid, nearestPointOnSegment,
   bboxHandles, slugify, annotationReducer, getAnnotationBounds, boxesIntersect,
 } from "./canvasHelpers";
 
@@ -97,6 +97,13 @@ interface Props {
    * - "double-click" — double-click to place the last point and finish
    */
   countFinishAction?: "enter" | "right-click" | "double-click";
+  /**
+   * Where a new vertex can be inserted when splitting an edge of a selected
+   * line / polyline / polygon.
+   * - "midpoint" — a fixed handle at the exact midpoint of each segment (default)
+   * - "anyPoint" — hover anywhere along a segment to insert the vertex at that point
+   */
+  edgeSplitMode?: "midpoint" | "anyPoint";
 
   // --- scale ---
   /** Scanner resolution of the image in dots per inch. Required for real-world dimension display. */
@@ -162,6 +169,7 @@ export function AnnotationCanvas({
   labelVisibility = "always",
   polylineFinishAction = "enter",
   countFinishAction = "enter",
+  edgeSplitMode = "midpoint",
   dpi,
   drawingScale: drawingScaleProp,
   onDrawingScaleChange,
@@ -208,6 +216,8 @@ export function AnnotationCanvas({
   const [draggingAnnotation, setDraggingAnnotation] = useState<{ id: string; startImg: [number, number] } | null>(null);
   const [draggingHandle, setDraggingHandle] = useState<{ annId: string; handleIdx: number; startImg: [number, number] } | null>(null);
   const [draggingVertex, setDraggingVertex] = useState<{ annId: string; vertIdx: number; startImg: [number, number] } | null>(null);
+  /** Live cursor position on a hovered edge segment, used by edgeSplitMode "anyPoint". */
+  const [edgeHover, setEdgeHover] = useState<{ annId: string; segIdx: number; pos: [number, number] } | null>(null);
   /** Drag-box multi-select while the select tool is active. */
   const [marquee, setMarquee] = useState<{ start: [number, number]; cur: [number, number]; additive: boolean } | null>(null);
 
@@ -533,6 +543,82 @@ export function AnnotationCanvas({
     if (!ptr) return [0, 0];
     return screenToImage(ptr.x, ptr.y, stagePos.x, stagePos.y, scale);
   }, [stagePos, scale]);
+
+  /** Inserts a new vertex at `pos` after segment index `segIdx`, then starts dragging it. */
+  const splitEdgeAt = useCallback((ann: CanonicalAnnotation, segIdx: number, pos: [number, number]) => {
+    snapshot();
+    const newPts: [number, number][] = [...ann.points];
+    newPts.splice(segIdx + 1, 0, pos);
+    const updated: CanonicalAnnotation = {
+      ...ann,
+      type: ann.type === "line" ? "polyline" : ann.type,
+      points: newPts,
+    };
+    annotationsRef.current = annotationsRef.current.map((a) => a.id === ann.id ? updated : a);
+    dispatchAndNotify({ type: "UPDATE", payload: updated });
+    setDraggingVertex({ annId: ann.id, vertIdx: segIdx + 1, startImg: pos });
+    setEdgeHover(null);
+  }, [snapshot, dispatchAndNotify]);
+
+  /**
+   * Edge-split handles for a selected line/polyline/polygon, honoring `edgeSplitMode`.
+   * `closed` wraps the last segment back to the first point (polygons).
+   */
+  const renderEdgeSplitHandles = useCallback((ann: CanonicalAnnotation, color: string, closed: boolean) => {
+    const pts = ann.points;
+    const segCount = closed ? pts.length : pts.length - 1;
+    const segments = Array.from({ length: segCount }, (_, i) => [pts[i]!, pts[(i + 1) % pts.length]!] as const);
+
+    if (edgeSplitMode === "anyPoint") {
+      return segments.map(([[x1, y1], [x2, y2]], i) => (
+        <Group key={`edge-${i}`}>
+          <Line
+            points={[x1, y1, x2, y2]}
+            stroke="transparent"
+            strokeWidth={1 / scale}
+            hitStrokeWidth={12 / scale}
+            onMouseMove={(e: KonvaEventObject<MouseEvent>) => {
+              e.cancelBubble = true;
+              const p = nearestPointOnSegment(getImagePos(e), [x1, y1], [x2, y2]);
+              setEdgeHover({ annId: ann.id, segIdx: i, pos: p });
+            }}
+            onMouseLeave={() => setEdgeHover((cur) => (cur?.annId === ann.id && cur.segIdx === i ? null : cur))}
+            onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
+              e.cancelBubble = true;
+              const p = nearestPointOnSegment(getImagePos(e), [x1, y1], [x2, y2]);
+              splitEdgeAt(ann, i, p);
+            }}
+          />
+          {edgeHover?.annId === ann.id && edgeHover.segIdx === i && (
+            <Circle
+              x={edgeHover.pos[0]} y={edgeHover.pos[1]}
+              radius={(HANDLE_RADIUS * 0.65) / scale}
+              fill={resolved.accent} stroke={resolved.handleFill} strokeWidth={1.5 / scale}
+              opacity={0.85} listening={false}
+            />
+          )}
+        </Group>
+      ));
+    }
+
+    return segments.map(([[x1, y1], [x2, y2]], i) => {
+      const mx = (x1 + x2) / 2;
+      const my = (y1 + y2) / 2;
+      return (
+        <Circle key={`mid-${i}`} x={mx} y={my}
+          radius={(HANDLE_RADIUS * 0.65) / scale}
+          fill={resolved.accent}
+          stroke={resolved.handleFill}
+          strokeWidth={1.5 / scale}
+          opacity={0.85}
+          onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
+            e.cancelBubble = true;
+            splitEdgeAt(ann, i, [mx, my]);
+          }}
+        />
+      );
+    });
+  }, [edgeSplitMode, scale, resolved, getImagePos, edgeHover, splitEdgeAt]);
 
   const panStart = useRef<{ x: number; y: number; stageX: number; stageY: number } | null>(null);
 
@@ -1189,10 +1275,12 @@ export function AnnotationCanvas({
       return (
         <Group key={ann.id}>
           <Line points={ann.points.flatMap(([x, y]) => [x, y])} closed fill={hexToRgba(color, fillAlpha)} fillEnabled={!isHollowFill} {...commonProps} />
+          {showHandles && renderEdgeSplitHandles(ann, color, true)}
           {showHandles && ann.points.map(([x, y], i) => (
             <Circle key={i} x={x} y={y} radius={VERTEX_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={1.5 / scale}
               onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
                 e.cancelBubble = true;
+                snapshot();
                 setDraggingVertex({ annId: ann.id, vertIdx: i, startImg: getImagePos(e) });
               }}
             />
@@ -1206,6 +1294,7 @@ export function AnnotationCanvas({
       return (
         <Group key={ann.id}>
           <Line points={ann.points.flatMap(([x, y]) => [x, y])} hitStrokeWidth={10 / scale} {...commonProps} />
+          {showHandles && renderEdgeSplitHandles(ann, color, false)}
           {showHandles && ann.points.map(([x, y], i) => (
             <Circle key={i} x={x} y={y} radius={HANDLE_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={2 / scale}
               onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
@@ -1215,34 +1304,6 @@ export function AnnotationCanvas({
               }}
             />
           ))}
-          {showHandles && ann.points.slice(0, -1).map(([x1, y1], i) => {
-            const [x2, y2] = ann.points[i + 1]!;
-            const mx = (x1 + x2) / 2;
-            const my = (y1 + y2) / 2;
-            return (
-              <Circle key={`mid-${i}`} x={mx} y={my}
-                radius={(HANDLE_RADIUS * 0.65) / scale}
-                fill={resolved.accent}
-                stroke={resolved.handleFill}
-                strokeWidth={1.5 / scale}
-                opacity={0.85}
-                onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
-                  e.cancelBubble = true;
-                  const newPts: [number, number][] = [...ann.points];
-                  newPts.splice(i + 1, 0, [mx, my]);
-                  const updated: CanonicalAnnotation = {
-                    ...ann,
-                    type: ann.type === "line" ? "polyline" : ann.type,
-                    points: newPts,
-                  };
-                  // Sync ref immediately so the drag handler sees the new vertex on the same frame
-                  annotationsRef.current = annotationsRef.current.map((a) => a.id === ann.id ? updated : a);
-                  dispatchAndNotify({ type: "UPDATE", payload: updated });
-                  setDraggingVertex({ annId: ann.id, vertIdx: i + 1, startImg: [mx, my] });
-                }}
-              />
-            );
-          })}
           {chip}
         </Group>
       );

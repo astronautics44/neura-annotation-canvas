@@ -179,6 +179,9 @@ interface AnnotationCanvasProps {
   polylineFinishAction?: "enter" | "right-click" | "double-click"; // default: "enter"
   countFinishAction?: "enter" | "right-click" | "double-click";    // default: "enter"
 
+  // Edge splitting on selected line / polyline / polygon
+  edgeSplitMode?: "midpoint" | "anyPoint"; // default: "midpoint"
+
   // Drawing scale — enables real-world dimension display on annotation chips
   dpi?: number;                                       // scanner resolution (dots per inch)
   drawingScale?: DrawingScale;                        // CV-extracted or user-set drawing scale
@@ -700,6 +703,29 @@ All three are added in a single undo step — `Ctrl+Z` removes the entire batch.
 
 ---
 
+### `edgeSplitMode` prop
+
+```typescript
+edgeSplitMode?: "midpoint" | "anyPoint"
+```
+
+Controls where a new vertex is inserted when splitting an edge of a selected `line`, `polyline`, or `polygon`. See [Splitting line / polyline / polygon edges](#splitting-line--polyline--polygon-edges).
+
+| Value          | Behavior                                                                                     |
+| -------------- | ---------------------------------------------------------------------------------------------- |
+| `"midpoint"`   | Fixed handle at the exact midpoint of each segment (default, matches pre-existing behavior)   |
+| `"anyPoint"`   | Ghost handle follows the cursor along the hovered edge; click inserts the vertex at that point |
+
+```tsx
+// Default — split handles only at segment midpoints
+<AnnotationCanvas edgeSplitMode="midpoint" ... />
+
+// Split from any point along an edge
+<AnnotationCanvas edgeSplitMode="anyPoint" ... />
+```
+
+---
+
 ### Label selector popover
 
 Appears after completing a draw gesture (or when relabeling). Supports:
@@ -752,13 +778,22 @@ Annotations render differently based on state and source:
 | Hovered          | 2.5px        | 15%        | —       |
 | Selected         | 2px          | 18%        | —       |
 
-Selected annotations show resize handles (bboxes: 8 handles at corners + edge midpoints; polygons: handles at every vertex; lines: handles at endpoints; circles: 4 cardinal handles — dragging any handle adjusts the radius while keeping the circle perfectly round).
+Selected annotations show resize handles (bboxes: 8 handles at corners + edge midpoints; polygons: handles at every vertex + every edge; lines/polylines: handles at endpoints + every segment; circles: 4 cardinal handles — dragging any handle adjusts the radius while keeping the circle perfectly round).
 
-### Splitting line / polyline segments
+### Splitting line / polyline / polygon edges
 
-When a `line` or `polyline` is selected, a smaller accent-colored handle appears at the **midpoint of each segment**. Clicking it inserts a new vertex at that midpoint, splitting the segment in two. The new vertex can be dragged immediately to reshape the annotation. Splitting a `line` (two endpoints) promotes it to `polyline` in the output.
+When a `line`, `polyline`, or `polygon` is selected, an accent-colored handle appears on each edge, letting you insert a new vertex mid-edge to reshape the annotation without redrawing it. Splitting a `line` (two endpoints) promotes it to `polyline` in the output. Polygon edges wrap around (the last point connects back to the first), so every edge — including the closing one — is splittable.
 
-This is the primary way to add detail to an existing line or polyline without redrawing it from scratch.
+Where the split point lands on the edge is controlled by the `edgeSplitMode` prop:
+
+- `"midpoint"` (default) — a fixed handle sits at the exact midpoint of each segment. Clicking it inserts the vertex there.
+- `"anyPoint"` — hover anywhere along an edge and a ghost handle follows your cursor, snapped to the nearest point on that segment. Click to insert the vertex exactly where you're hovering.
+
+```tsx
+<AnnotationCanvas edgeSplitMode="anyPoint" ... />
+```
+
+Vertex handles always render above edge-split handles, so dragging an existing vertex near an edge never gets misread as a split.
 
 Label chips (color dot + display name + confidence % + optional symbol size) are rendered at each annotation. They are hidden when zoom drops below 30%.
 

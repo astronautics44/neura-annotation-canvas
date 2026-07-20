@@ -44,6 +44,21 @@ export function screenToImage(sx: number, sy: number, stageX: number, stageY: nu
   return [(sx - stageX) / scale, (sy - stageY) / scale];
 }
 
+/** Closest point to `p` lying on segment [a, b], clamped to the segment. */
+export function nearestPointOnSegment(
+  p: [number, number],
+  a: [number, number],
+  b: [number, number],
+): [number, number] {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return a;
+  let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  return [a[0] + t * dx, a[1] + t * dy];
+}
+
 export function centroid(pts: [number, number][]): [number, number] {
   const x = pts.reduce((s, p) => s + p[0], 0) / pts.length;
   const y = pts.reduce((s, p) => s + p[1], 0) / pts.length;

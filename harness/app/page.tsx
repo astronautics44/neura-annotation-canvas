@@ -80,6 +80,7 @@ function getAnnotations(engine: Engine): CanonicalAnnotation[] {
 
 type LabelVisibility = "always" | "hover" | "selected" | "hover+selected";
 type FinishAction = "enter" | "right-click" | "double-click";
+type EdgeSplitMode = "midpoint" | "anyPoint";
 
 export default function Page() {
   const [engine, setEngine] = useState<Engine>("A");
@@ -88,6 +89,7 @@ export default function Page() {
   const [labelVisibility, setLabelVisibility] = useState<LabelVisibility>("always");
   const [polylineFinishAction, setPolylineFinishAction] = useState<FinishAction>("right-click");
   const [countFinishAction, setCountFinishAction] = useState<FinishAction>("right-click");
+  const [edgeSplitMode, setEdgeSplitMode] = useState<EdgeSplitMode>("midpoint");
   const activePreset = SCALE_PRESETS[scalePreset]!;
   const annotations = useMemo(() => getAnnotations(engine), [engine]);
 
@@ -239,6 +241,18 @@ export default function Page() {
               <option value="double-click">double-click</option>
             </select>
           </label>
+
+          <label style={{ fontSize: 11, color: lightTheme.textSecondary, display: "flex", alignItems: "center", gap: 4 }}>
+            Edge split:
+            <select
+              value={edgeSplitMode}
+              onChange={(e) => setEdgeSplitMode(e.target.value as EdgeSplitMode)}
+              style={selectStyle(lightTheme)}
+            >
+              <option value="midpoint">midpoint</option>
+              <option value="anyPoint">anyPoint</option>
+            </select>
+          </label>
         </div>
 
         {/* Feature hints */}
@@ -276,6 +290,7 @@ export default function Page() {
           labelVisibility={labelVisibility}
           polylineFinishAction={polylineFinishAction}
           countFinishAction={countFinishAction}
+          edgeSplitMode={edgeSplitMode}
           dpi={activePreset.dpi > 0 ? activePreset.dpi : undefined}
           drawingScale={activePreset.dpi > 0 ? activePreset.scale : undefined}
           onDrawingScaleChange={(s) => console.log("[annotation-engine] onDrawingScaleChange", s)}
