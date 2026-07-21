@@ -1093,7 +1093,9 @@ export function AnnotationCanvas({
     const showHandles = isSelected && selectedIds.length === 1;
 
     const baseStrokeWidth = isEngine ? 1.5 : 2;
-    const strokeWidth = isSelected ? 2 : isHovered ? 2.5 : baseStrokeWidth;
+    // Selection is signalled by the accent glow (selectionGlow) + fill, not by a
+    // thicker stroke — keep the stroke at its base/hover width.
+    const strokeWidth = isHovered ? 2.5 : baseStrokeWidth;
     const opacity = isEngine ? 0.85 : 1.0;
     const shapeMeta = ann.meta as ShapeMeta | undefined;
     const isHollowFill = shapeMeta?.hollow === true;
@@ -1139,10 +1141,22 @@ export function AnnotationCanvas({
       setRelabelId(ann.id);
     };
 
+    // Selected shapes get a glow ring behind the stroke so multi-selection is
+    // clearly distinguishable from unselected/hovered shapes (which never glow).
+    const selectionGlow = isSelected
+      ? {
+          shadowColor: resolved.accent,
+          shadowBlur: 16 / scale,
+          shadowOpacity: 1,
+          shadowOffset: { x: 0, y: 0 },
+        }
+      : {};
+
     const commonProps = {
       stroke: color,
       strokeWidth: strokeWidth / scale,
       opacity,
+      ...selectionGlow,
       onClick: (e: KonvaEventObject<MouseEvent>) => handleAnnotationClick(ann.id, e),
       onMouseDown: (e: KonvaEventObject<MouseEvent>) => handleAnnotationMouseDown(ann.id, e),
       onDblClick: handleDblClick,
@@ -1313,7 +1327,7 @@ export function AnnotationCanvas({
       const [x, y] = ann.points[0]!;
       return (
         <Group key={ann.id}>
-          <Circle x={x} y={y} radius={8 / scale} fill={color} stroke={resolved.handleFill} strokeWidth={2 / scale} opacity={opacity}
+          <Circle x={x} y={y} radius={8 / scale} fill={color} stroke={isSelected ? resolved.accent : resolved.handleFill} strokeWidth={2 / scale} opacity={opacity} {...selectionGlow}
             onClick={(e: KonvaEventObject<MouseEvent>) => handleAnnotationClick(ann.id, e)}
             onMouseDown={(e: KonvaEventObject<MouseEvent>) => handleAnnotationMouseDown(ann.id, e)}
             onDblClick={handleDblClick}

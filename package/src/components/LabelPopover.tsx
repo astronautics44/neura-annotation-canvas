@@ -15,6 +15,14 @@ interface Props {
   onCreateLabel?: ((displayName: string) => string) | undefined;
   /** Pre-fill symbol size fields when relabeling an existing annotation. */
   initialSymbolSize?: SymbolSize;
+  /**
+   * How `position` is interpreted. Default "absolute" positions relative to the
+   * nearest positioned ancestor (used for canvas-relative popovers). "fixed"
+   * treats `position` as viewport coordinates and escapes any ancestor
+   * overflow:hidden clip (used by the label panel, whose scroll container would
+   * otherwise clip it).
+   */
+  positionStrategy?: "absolute" | "fixed";
 }
 
 type Phase = "pick-label" | "symbol-size";
@@ -51,6 +59,7 @@ export function LabelPopover({
   onCancel,
   onCreateLabel,
   initialSymbolSize,
+  positionStrategy = "absolute",
 }: Props) {
   const [phase, setPhase] = useState<Phase>("pick-label");
   const [pickedLabel, setPickedLabel] = useState<string | null>(null);
@@ -198,7 +207,7 @@ export function LabelPopover({
   return (
     <div
       style={{
-        position: "absolute",
+        position: positionStrategy,
         left: Math.min(position.x, window.innerWidth - popoverWidth - 10),
         top: Math.min(position.y, window.innerHeight - 360),
         width: popoverWidth,

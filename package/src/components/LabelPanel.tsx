@@ -86,10 +86,24 @@ export function LabelPanel({
     };
   }, [selectedIds]); // eslint-disable-line react-hooks/exhaustive-deps
   const [query, setQuery] = useState("");
+  const panelRef = useRef<HTMLDivElement>(null);
   const [relabelTarget, setRelabelTarget] = useState<{
     id: string;
     pos: { x: number; y: number };
   } | null>(null);
+
+  // Popover width in its widest (symbol-size) phase, plus a gap — used to place
+  // the relabel popover fully to the left of the panel, over the canvas, so it
+  // never covers the annotation list.
+  const RELABEL_POPOVER_CLEARANCE = 248;
+  const openRelabel = (id: string, buttonRect: DOMRect) => {
+    const panelLeft =
+      panelRef.current?.getBoundingClientRect().left ?? buttonRect.left;
+    setRelabelTarget({
+      id,
+      pos: { x: panelLeft - RELABEL_POPOVER_CLEARANCE, y: buttonRect.top },
+    });
+  };
 
   const filteredAnnotations = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -130,6 +144,7 @@ export function LabelPanel({
 
   return (
     <div
+      ref={panelRef}
       style={{
         width,
         minWidth: width,
@@ -395,7 +410,7 @@ export function LabelPanel({
                     shortId={shortId}
                     onSelect={onSelect}
                     onDelete={onDelete}
-                    onRelabelRequest={(id, pos) => setRelabelTarget({ id, pos })}
+                    onRelabelRequest={openRelabel}
                     onMouseEnter={() => setHoveredRow(ann.id)}
                     onMouseLeave={() => setHoveredRow(null)}
                   />
@@ -450,10 +465,14 @@ export function LabelPanel({
       {relabelTarget && (() => {
         const relabelAnn = annotations.find((a) => a.id === relabelTarget.id);
         const initialSize = parseSymbolSize(relabelAnn?.meta);
+        // Rendered in place (keeps the theme's CSS variables) but positioned
+        // with `fixed` + viewport coordinates so it escapes the panel's
+        // overflow:hidden clip instead of vanishing the list behind it.
         return (
           <LabelPopover
             labels={labels}
             position={relabelTarget.pos}
+            positionStrategy="fixed"
             {...(initialSize ? { initialSymbolSize: initialSize } : {})}
             onSelect={(label, symbolSize) => {
               onRelabel(relabelTarget.id, label, symbolSize);
@@ -477,7 +496,7 @@ interface AnnotationRowProps {
   shortId: (id: string) => string;
   onSelect: (id: string, additive: boolean) => void;
   onDelete: (id: string) => void;
-  onRelabelRequest: (id: string, pos: { x: number; y: number }) => void;
+  onRelabelRequest: (id: string, buttonRect: DOMRect) => void;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
   indent?: number;
@@ -602,8 +621,7 @@ function AnnotationRow({
               title="Relabel"
               onClick={(e) => {
                 e.stopPropagation();
-                const rect = e.currentTarget.getBoundingClientRect();
-                onRelabelRequest(ann.id, { x: rect.left - 200, y: rect.top });
+                onRelabelRequest(ann.id, e.currentTarget.getBoundingClientRect());
               }}
               style={actionBtn}
             >
