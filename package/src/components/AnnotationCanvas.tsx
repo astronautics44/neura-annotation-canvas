@@ -1655,6 +1655,14 @@ export function AnnotationCanvas({
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {/* Real-world size of the single selected annotation — visible at any zoom */}
+          {selectedIds.length === 1 && (() => {
+            const ann = annotations.find((a) => a.id === selectedIds[0]);
+            const dim = ann ? formatAnnotationCalculatedSize(ann, dpi, drawingScale) : "";
+            return dim ? (
+              <span style={{ fontFamily: "'JetBrains Mono','Fira Code',monospace", color: "var(--ae-text-primary)" }}>{dim}</span>
+            ) : null;
+          })()}
           {selectedIds.length > 0 && (
             <span>
               {selectedIds.length} selected

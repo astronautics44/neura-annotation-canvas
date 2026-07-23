@@ -265,3 +265,19 @@ export function getAnnotationRings(ann: CanonicalAnnotation): [number, number][]
   if (ann.type === "polygon") return [ann.points];
   return [];
 }
+
+/** Geometric area of an area annotation in image pixel² (outer ring minus holes). 0 for non-area types. */
+export function annotationPixelArea(ann: CanonicalAnnotation): number {
+  const meta = ann.meta as ShapeMeta | undefined;
+  // Plain circle (no compound rings): exact π·r² instead of the segment approximation
+  if (ann.type === "circle" && !meta?.rings?.length) {
+    const { w } = bboxToKonva(ann.points);
+    const r = w / 2;
+    return Math.PI * r * r;
+  }
+  const rings = getAnnotationRings(ann);
+  if (rings.length === 0) return 0;
+  let area = ringArea(closeRing(rings[0]!));
+  for (let i = 1; i < rings.length; i++) area -= ringArea(closeRing(rings[i]!));
+  return Math.max(area, 0);
+}

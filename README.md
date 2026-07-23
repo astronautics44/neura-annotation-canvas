@@ -749,7 +749,7 @@ Shows all annotations grouped by label. Features:
 - Hover a row to reveal relabel (✎) and delete (✕) actions
 - Each annotation shows an `H` badge (human-created) or `AI` badge (engine output)
 - When `meta.symbolSize` is set, the row shows the manual dimension (e.g. `diameter - 12mm`)
-- When `dpi` and `drawingScale` are set, each row also shows the computed real-world size below the annotation ID (e.g. `4.25m` for a line, `0.90m × 2.10m` for a bbox)
+- When `dpi` and `drawingScale` are set, each row also shows the computed real-world size below the annotation ID (e.g. `4.25m` for a line, `0.90m×2.10m · 1.89m²` for a bbox, `14.2m²` for a polygon, `⌀0.60m · 0.28m²` for a circle)
 
 ---
 
@@ -866,6 +866,22 @@ real dimension = pixels × (scale.value × 25.4) / dpi   (metric)
 real dimension = pixels × scale.value / dpi             (imperial)
 ```
 
+### Area measurement (bounded shapes)
+
+Every bounded annotation — **bbox, polygon, and circle** — also displays its enclosed real-world area, derived from the same DPI + scale calibration:
+
+```
+real area = pixel area × (real units per pixel)²
+```
+
+- **BBox** — shown as `length×width · area` (e.g. `10.0ft×4.0ft · 40.0ft²`)
+- **Circle** — shown as `⌀diameter · area`, computed exactly as π·r²
+- **Polygon** — area via the shoelace formula over its vertices
+- **Compound shapes** (created with *Cut hole*) subtract hole areas from the outer ring, so a donut reports its true net area
+- Units auto-promote for readability: `mm² → m²` (≥ 1,000,000), `cm² → m²` (≥ 10,000), `in² → ft²` (≥ 144)
+
+Areas appear in the annotation chips, the label panel rows, and the status-bar readout for the selected annotation.
+
 ### `DrawingScale` type
 
 ```typescript
@@ -937,11 +953,13 @@ const cvScale: DrawingScale = { value: 100, unit: "mm", label: "1:100" };
 
 ### What the user sees
 
-- **Annotation chips** show real-world dimensions next to the label:
-  - BBox: `Door  92%  0.90m × 2.10m`
-  - Circle: `Column  ⌀0.60m`
-  - Line: `Wall  4.25m`
+- **Annotation chips** show real-world dimensions next to the label. Bounded shapes (bbox, polygon, circle) also include their enclosed **area**:
+  - BBox: `Door  92%  0.90m×2.10m · 1.89m²` (length × width · area)
+  - Circle: `Column  ⌀0.60m · 0.28m²` (diameter · area)
+  - Polygon: `Room  14.2m²` (area)
+  - Line / polyline: `Wall  4.25m` (length)
 - **Status bar** shows the active scale and DPI: `Scale: 1:100 · 300 DPI`
+- **Status bar** also shows the full measurement of the currently selected annotation (when exactly one is selected) — visible at **any zoom level**, even when label chips are hidden by the zoom threshold or `labelVisibility` setting
 - **Edit button (✎)** next to the scale label opens the scale editor. The editor shows **both sides** of the equality — paper measurement on the left, real-world measurement on the right. Both sides accept fraction notation (`1/8`) and architectural feet+inches (`1'-6"`). Press **Confirm** to apply, **Cancel** to close without change. `onDrawingScaleChange` fires with the corrected scale.
 - In `readonly` mode the edit button is hidden.
 

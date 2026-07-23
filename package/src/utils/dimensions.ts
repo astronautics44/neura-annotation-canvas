@@ -1,5 +1,6 @@
 import type { CanonicalAnnotation } from "../types/canonical";
 import { bboxToKonva } from "../components/canvasHelpers";
+import { annotationPixelArea } from "./booleanOps";
 
 export type DrawingScaleUnit = "mm" | "cm" | "m" | "in" | "ft";
 
@@ -35,7 +36,25 @@ export function formatDimFromPixels(
   return `${val.toFixed(val < 10 ? 2 : 1)}${unit}`;
 }
 
-/** Real-world size from pixel geometry + drawing scale. Empty when scale is not configured. */
+/** Real-world area from a pixel² value + drawing scale. Empty when scale is not configured. */
+export function formatAreaFromPixels(
+  pixelArea: number,
+  dpi: number | undefined,
+  drawingScale: DrawingScaleInput | undefined,
+): string {
+  const realUnitsPerPixel = getRealUnitsPerPixel(dpi, drawingScale);
+  if (realUnitsPerPixel === null || !drawingScale) return "";
+  let val = pixelArea * realUnitsPerPixel * realUnitsPerPixel;
+  let unit: string = drawingScale.unit;
+  // Same promotion thresholds as formatDimFromPixels, squared
+  if (unit === "mm" && val >= 1_000_000) { val /= 1_000_000; unit = "m"; }
+  else if (unit === "cm" && val >= 10_000) { val /= 10_000; unit = "m"; }
+  else if (unit === "in" && val >= 144) { val /= 144; unit = "ft"; }
+  return `${val.toFixed(val < 10 ? 2 : 1)}${unit}²`;
+}
+
+/** Real-world size from pixel geometry + drawing scale. Empty when scale is not configured.
+ *  Bounded shapes include their enclosed area: bbox "W×H · A", circle "⌀d · A", polygon "A". */
 export function formatAnnotationCalculatedSize(
   ann: CanonicalAnnotation,
   dpi: number | undefined,
@@ -45,11 +64,16 @@ export function formatAnnotationCalculatedSize(
 
   if (ann.type === "bbox") {
     const { w, h } = bboxToKonva(ann.points);
-    return `${formatDimFromPixels(w, dpi, drawingScale)}×${formatDimFromPixels(h, dpi, drawingScale)}`;
+    const area = formatAreaFromPixels(annotationPixelArea(ann), dpi, drawingScale);
+    return `${formatDimFromPixels(w, dpi, drawingScale)}×${formatDimFromPixels(h, dpi, drawingScale)} · ${area}`;
   }
   if (ann.type === "circle") {
     const { w } = bboxToKonva(ann.points);
-    return `⌀${formatDimFromPixels(w, dpi, drawingScale)}`;
+    const area = formatAreaFromPixels(annotationPixelArea(ann), dpi, drawingScale);
+    return `⌀${formatDimFromPixels(w, dpi, drawingScale)} · ${area}`;
+  }
+  if (ann.type === "polygon") {
+    return formatAreaFromPixels(annotationPixelArea(ann), dpi, drawingScale);
   }
   if (ann.type === "line") {
     const dx = ann.points[1]![0] - ann.points[0]![0];
