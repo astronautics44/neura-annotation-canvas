@@ -746,6 +746,7 @@ Shows all annotations grouped by label. Features:
 - Click an annotation row to select it on canvas (auto-pans if out of view)
 - **Selecting an annotation on canvas auto-scrolls the panel to that row and highlights it** — collapsed groups are automatically expanded
 - Click a group header to collapse/expand
+- **Class visibility filter** — each group header has an eye toggle to hide/show that class's annotations on the canvas; a master eye toggle in the panel header hides or shows all classes at once. Hide everything, then click one class to review it in isolation. Hidden classes dim in the list and their shapes become non-selectable (excluded from clicks, marquee drag-select, and select-all). Visibility is a view-only state and never mutates annotation data.
 - Hover a row to reveal relabel (✎) and delete (✕) actions
 - Each annotation shows an `H` badge (human-created) or `AI` badge (engine output)
 - When `meta.symbolSize` is set, the row shows the manual dimension (e.g. `diameter - 12mm`)
@@ -794,6 +795,12 @@ Where the split point lands on the edge is controlled by the `edgeSplitMode` pro
 ```
 
 Vertex handles always render above edge-split handles, so dragging an existing vertex near an edge never gets misread as a split.
+
+### Deleting a vertex
+
+When a `polygon`, `polyline`, or `line` is selected, **right-click** or **Alt+click** any vertex handle to delete it — the two edges that met there collapse into one new edge between the neighbouring vertices. Minimums are enforced: a polygon never drops below 3 vertices and a polyline never below 2 (a `line` has exactly two endpoints, so its vertices can't be deleted).
+
+Deleting a **corner of a bbox** converts the rectangle to a `polygon` of the three remaining corners (a triangle), since a rectangle has no valid three-corner form. Vertex deletion is a single, undoable step and fires `onChange`.
 
 Label chips (color dot + display name + confidence % + optional symbol size) are rendered at each annotation. They are hidden when zoom drops below 30%.
 

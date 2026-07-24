@@ -220,6 +220,20 @@ export function AnnotationCanvas({
   const [edgeHover, setEdgeHover] = useState<{ annId: string; segIdx: number; pos: [number, number] } | null>(null);
   /** Drag-box multi-select while the select tool is active. */
   const [marquee, setMarquee] = useState<{ start: [number, number]; cur: [number, number]; additive: boolean } | null>(null);
+  /** Label class ids whose annotations are hidden from the canvas (list filter). */
+  const [hiddenClasses, setHiddenClasses] = useState<Set<string>>(new Set());
+
+  /** Toggle canvas visibility of a set of label classes, dropping any now-hidden
+   *  annotations from the current selection so hidden shapes can't be edited. */
+  const handleVisibilityChange = useCallback((next: Set<string>) => {
+    setHiddenClasses(next);
+    setSelectedIds((prev) =>
+      prev.filter((id) => {
+        const ann = annotationsRef.current.find((a) => a.id === id);
+        return ann ? !next.has(ann.label) : false;
+      }),
+    );
+  }, []);
 
   // Fullscreen state
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -460,7 +474,7 @@ export function AnnotationCanvas({
       // Select all: Cmd/Ctrl+A
       if (enableSelectAll && (e.metaKey || e.ctrlKey) && e.key === "a") {
         e.preventDefault();
-        setSelectedIds(annotationsRef.current.map((a) => a.id));
+        setSelectedIds(annotationsRef.current.filter((a) => !hiddenClasses.has(a.label)).map((a) => a.id));
         return;
       }
 
@@ -530,7 +544,7 @@ export function AnnotationCanvas({
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp); };
-  }, [draw, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelId, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction]);
+  }, [draw, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelId, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction, hiddenClasses]);
 
   // ---------------------------------------------------------------------------
   // Stage event handlers
@@ -826,6 +840,7 @@ export function AnnotationCanvas({
         if (!marquee.additive) setSelectedIds([]);
       } else {
         const hits = annotationsRef.current
+          .filter((ann) => !hiddenClasses.has(ann.label))
           .filter((ann) => boxesIntersect(box, getAnnotationBounds(ann)))
           .map((ann) => ann.id);
         if (marquee.additive) {
@@ -854,7 +869,7 @@ export function AnnotationCanvas({
     setDraggingAnnotation(null);
     setDraggingHandle(null);
     setDraggingVertex(null);
-  }, [readonly, draw, getImagePos, marquee]);
+  }, [readonly, draw, getImagePos, marquee, hiddenClasses]);
 
   const handleStageContextMenu = useCallback((e: KonvaEventObject<MouseEvent>) => {
     if (polylineFinishAction === "right-click" && draw.phase === "polyline-drawing" && draw.pts.length >= 2) {
@@ -1565,7 +1580,7 @@ export function AnnotationCanvas({
           >
             <Layer>
               {img && <KonvaImage image={img} x={0} y={0} width={img.width} height={img.height} name="bg-image" />}
-              {annotations.map(renderAnnotation)}
+              {annotations.filter((a) => !hiddenClasses.has(a.label)).map(renderAnnotation)}
               {renderDraw()}
             </Layer>
           </Stage>
@@ -1613,6 +1628,8 @@ export function AnnotationCanvas({
           annotations={annotations}
           labels={labels}
           selectedIds={selectedIds}
+          hiddenClasses={hiddenClasses}
+          onVisibilityChange={handleVisibilityChange}
           readonly={readonly}
           {...(dimensionContext ? { dimensionContext } : {})}
           onCreateLabel={readonly ? undefined : handleCreateLabel}

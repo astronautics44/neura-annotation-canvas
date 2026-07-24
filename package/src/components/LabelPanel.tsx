@@ -13,6 +13,10 @@ interface Props {
   annotations: CanonicalAnnotation[];
   labels: LabelMap[];
   selectedIds: string[];
+  /** Label class ids currently hidden from the canvas. */
+  hiddenClasses?: ReadonlySet<string>;
+  /** Called with the next full set of hidden class ids when the user toggles visibility. */
+  onVisibilityChange?: (next: Set<string>) => void;
   onSelect: (id: string, additive: boolean) => void;
   onDelete: (id: string) => void;
   onDeleteSelected?: () => void;
@@ -29,6 +33,8 @@ export function LabelPanel({
   annotations,
   labels,
   selectedIds,
+  hiddenClasses,
+  onVisibilityChange,
   onSelect,
   onDelete,
   onDeleteSelected,
@@ -131,6 +137,30 @@ export function LabelPanel({
     (a) => !labels.some((l) => l.canonicalClassId === a.label),
   );
 
+  // ── Class visibility ──
+  const hidden = hiddenClasses ?? EMPTY_SET;
+  const presentLabelIds = useMemo(() => {
+    const s = new Set<string>();
+    annotations.forEach((a) => s.add(a.label));
+    return s;
+  }, [annotations]);
+  const ungroupedLabelIds = useMemo(
+    () => Array.from(new Set(ungrouped.map((a) => a.label))),
+    [ungrouped],
+  );
+  const allHidden =
+    presentLabelIds.size > 0 &&
+    Array.from(presentLabelIds).every((id) => hidden.has(id));
+
+  const setClassesHidden = (ids: string[], hide: boolean) => {
+    if (!onVisibilityChange) return;
+    const next = new Set(hidden);
+    ids.forEach((id) => (hide ? next.add(id) : next.delete(id)));
+    onVisibilityChange(next);
+  };
+  const toggleAll = () =>
+    setClassesHidden(Array.from(presentLabelIds), !allHidden);
+
   const shortId = (id: string) => id.slice(0, 7);
 
   const toggleCollapse = (classId: string) => {
@@ -194,6 +224,27 @@ export function LabelPanel({
             Annotations
           </span>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {onVisibilityChange && presentLabelIds.size > 0 && (
+              <button
+                title={allHidden ? "Show all classes" : "Hide all classes"}
+                onClick={toggleAll}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 22,
+                  height: 22,
+                  background: "none",
+                  border: "1px solid var(--ae-border)",
+                  borderRadius: 6,
+                  color: allHidden ? "var(--ae-text-muted)" : "var(--ae-text-secondary)",
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+              >
+                <EyeIcon open={!allHidden} />
+              </button>
+            )}
             {selectedIds.length > 1 && !readonly && onDeleteSelected && (
               <button
                 title={`Delete ${selectedIds.length} selected`}
@@ -325,8 +376,9 @@ export function LabelPanel({
 
         {grouped.map(({ lm, items }) => {
           const isCollapsed = collapsed.has(lm.canonicalClassId);
+          const isHidden = hidden.has(lm.canonicalClassId);
           return (
-            <div key={lm.canonicalClassId}>
+            <div key={lm.canonicalClassId} style={{ opacity: isHidden ? 0.45 : 1 }}>
               {/* Sticky group header */}
               <div
                 onClick={() => toggleCollapse(lm.canonicalClassId)}
@@ -368,6 +420,18 @@ export function LabelPanel({
                 >
                   {lm.displayName}
                 </span>
+                {onVisibilityChange && (
+                  <button
+                    title={isHidden ? "Show on canvas" : "Hide from canvas"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setClassesHidden([lm.canonicalClassId], !isHidden);
+                    }}
+                    style={eyeBtn}
+                  >
+                    <EyeIcon open={!isHidden} />
+                  </button>
+                )}
                 <span
                   style={{
                     fontSize: 10,
@@ -420,14 +484,21 @@ export function LabelPanel({
         })}
 
         {/* Unknown-label annotations */}
-        {ungrouped.length > 0 && (
-          <div>
+        {ungrouped.length > 0 && (() => {
+          const unknownHidden =
+            ungroupedLabelIds.length > 0 &&
+            ungroupedLabelIds.every((id) => hidden.has(id));
+          return (
+          <div style={{ opacity: unknownHidden ? 0.45 : 1 }}>
             <div
               style={{
                 position: "sticky",
                 top: 0,
                 zIndex: 1,
-                padding: "5px 12px",
+                display: "flex",
+                alignItems: "center",
+                gap: 7,
+                padding: "5px 10px 5px 12px",
                 background: "var(--ae-bg-surface)",
                 borderBottom: "1px solid var(--ae-border-subtle)",
                 borderTop: "1px solid var(--ae-border-subtle)",
@@ -436,7 +507,16 @@ export function LabelPanel({
                 fontStyle: "italic",
               }}
             >
-              Unknown label ({ungrouped.length})
+              <span style={{ flex: 1 }}>Unknown label ({ungrouped.length})</span>
+              {onVisibilityChange && (
+                <button
+                  title={unknownHidden ? "Show on canvas" : "Hide from canvas"}
+                  onClick={() => setClassesHidden(ungroupedLabelIds, !unknownHidden)}
+                  style={eyeBtn}
+                >
+                  <EyeIcon open={!unknownHidden} />
+                </button>
+              )}
             </div>
             {ungrouped.map((ann) => (
               <AnnotationRow
@@ -456,7 +536,8 @@ export function LabelPanel({
               />
             ))}
           </div>
-        )}
+          );
+        })()}
 
         {/* Bottom padding so last row isn't flush against the edge */}
         <div style={{ height: 8 }} />
@@ -662,6 +743,39 @@ function AnnotationRow({
         </div>
       )}
     </div>
+  );
+}
+
+const EMPTY_SET: ReadonlySet<string> = new Set();
+
+const eyeBtn: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 20,
+  height: 20,
+  background: "none",
+  border: "none",
+  cursor: "pointer",
+  color: "var(--ae-text-secondary)",
+  borderRadius: 3,
+  padding: 0,
+  flexShrink: 0,
+};
+
+/** Eye (visible) / eye-off (hidden) toggle icon. */
+function EyeIcon({ open }: { open: boolean }) {
+  return open ? (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+      <path d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8z" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="8" cy="8" r="1.8" stroke="currentColor" strokeWidth="1.3" />
+    </svg>
+  ) : (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+      <path d="M6.3 3.7A6.9 6.9 0 018 3.5c4.5 0 7 4.5 7 4.5a13 13 0 01-2.2 2.7M9.7 12.3A6.9 6.9 0 018 12.5C3.5 12.5 1 8 1 8a13 13 0 013.3-3.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M6.6 6.6a2 2 0 002.8 2.8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+      <line x1="2" y1="2" x2="14" y2="14" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
   );
 }
 
