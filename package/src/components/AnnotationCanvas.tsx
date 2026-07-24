@@ -561,6 +561,38 @@ export function AnnotationCanvas({
   }, [snapshot, dispatchAndNotify]);
 
   /**
+   * Removes vertex `vertIdx` from a poly-based shape; the two edges that met at
+   * the deleted vertex collapse into a single new edge between its neighbours.
+   * No-op if it would drop below the shape's minimum vertex count
+   * (polygon ≥ 3, polyline/line ≥ 2).
+   */
+  const deleteVertex = useCallback((ann: CanonicalAnnotation, vertIdx: number) => {
+    if (readonly) return;
+    const min = ann.type === "polygon" ? 3 : 2;
+    if (ann.points.length <= min) return;
+    const next = ann.points.filter((_, i) => i !== vertIdx) as [number, number][];
+    const updated: CanonicalAnnotation = { ...ann, points: next };
+    annotationsRef.current = annotationsRef.current.map((a) => (a.id === ann.id ? updated : a));
+    dispatchAndNotify({ type: "UPDATE", payload: updated });
+  }, [readonly, dispatchAndNotify]);
+
+  /**
+   * Deletes a corner of a bbox. A rectangle is defined by two corners, so it
+   * has no meaningful "3-corner" form — the shape is converted to a polygon
+   * whose vertices are the three remaining corners, which then connect into a
+   * closed triangle. `cornerIdx` is 0..3 clockwise from top-left.
+   */
+  const deleteBboxCorner = useCallback((ann: CanonicalAnnotation, cornerIdx: number) => {
+    if (readonly || ann.type !== "bbox") return;
+    const { x, y, w, h } = bboxToKonva(ann.points);
+    const corners: [number, number][] = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
+    const next = corners.filter((_, i) => i !== cornerIdx) as [number, number][];
+    const updated: CanonicalAnnotation = { ...ann, type: "polygon", points: next };
+    annotationsRef.current = annotationsRef.current.map((a) => (a.id === ann.id ? updated : a));
+    dispatchAndNotify({ type: "UPDATE", payload: updated });
+  }, [readonly, dispatchAndNotify]);
+
+  /**
    * Edge-split handles for a selected line/polyline/polygon, honoring `edgeSplitMode`.
    * `closed` wraps the last segment back to the first point (polygons).
    */
@@ -1222,16 +1254,26 @@ export function AnnotationCanvas({
       return (
         <Group key={ann.id}>
           <Rect x={x} y={y} width={w} height={h} fill={hexToRgba(color, fillAlpha)} fillEnabled={!isHollowFill} {...commonProps} />
-          {showHandles && bboxHandles(x, y, w, h).map((handle, i) => (
-            <Circle key={i} x={handle.pos[0]} y={handle.pos[1]}
-              radius={HANDLE_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={2 / scale}
-              onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
-                e.cancelBubble = true;
-                snapshot();
-                setDraggingHandle({ annId: ann.id, handleIdx: i, startImg: getImagePos(e) });
-              }}
-            />
-          ))}
+          {showHandles && bboxHandles(x, y, w, h).map((handle, i) => {
+            // Even indices are corners (0=TL,2=TR,4=BR,6=BL); odd are edge
+            // midpoints, which aren't real vertices and can't be deleted.
+            const cornerIdx = i % 2 === 0 ? i / 2 : -1;
+            return (
+              <Circle key={i} x={handle.pos[0]} y={handle.pos[1]}
+                radius={HANDLE_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={2 / scale}
+                onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
+                  e.cancelBubble = true;
+                  if (e.evt.altKey && cornerIdx >= 0) { e.evt.preventDefault(); deleteBboxCorner(ann, cornerIdx); return; }
+                  snapshot();
+                  setDraggingHandle({ annId: ann.id, handleIdx: i, startImg: getImagePos(e) });
+                }}
+                onContextMenu={(e: KonvaEventObject<MouseEvent>) => {
+                  e.cancelBubble = true; e.evt.preventDefault();
+                  if (cornerIdx >= 0) deleteBboxCorner(ann, cornerIdx);
+                }}
+              />
+            );
+          })}
           {chip}
         </Group>
       );
@@ -1294,8 +1336,13 @@ export function AnnotationCanvas({
             <Circle key={i} x={x} y={y} radius={VERTEX_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={1.5 / scale}
               onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
                 e.cancelBubble = true;
+                if (e.evt.altKey) { e.evt.preventDefault(); deleteVertex(ann, i); return; }
                 snapshot();
                 setDraggingVertex({ annId: ann.id, vertIdx: i, startImg: getImagePos(e) });
+              }}
+              onContextMenu={(e: KonvaEventObject<MouseEvent>) => {
+                e.cancelBubble = true; e.evt.preventDefault();
+                deleteVertex(ann, i);
               }}
             />
           ))}
@@ -1313,8 +1360,13 @@ export function AnnotationCanvas({
             <Circle key={i} x={x} y={y} radius={HANDLE_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={2 / scale}
               onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
                 e.cancelBubble = true;
+                if (e.evt.altKey) { e.evt.preventDefault(); deleteVertex(ann, i); return; }
                 snapshot();
                 setDraggingVertex({ annId: ann.id, vertIdx: i, startImg: getImagePos(e) });
+              }}
+              onContextMenu={(e: KonvaEventObject<MouseEvent>) => {
+                e.cancelBubble = true; e.evt.preventDefault();
+                deleteVertex(ann, i);
               }}
             />
           ))}
