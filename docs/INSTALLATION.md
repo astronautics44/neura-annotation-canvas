@@ -4,7 +4,7 @@ This guide is for a developer who wants to use `@astronautics44/neura-annotation
 
 ## 1. Get Package Access
 
-The package is published to GitHub Packages under the `@astronautics44` scope. Because it is private, your app needs a token that can read packages.
+The package is published to GitHub Packages under the `@astronautics44` scope. It is a public package, so you do **not** need to be a member of the `astronautics44` organization to install it — but you do still need a GitHub token, because the GitHub Packages npm registry requires authentication for every download, public packages included. Any GitHub account can create a qualifying token in about a minute; the steps are below.
 
 Create or update `.npmrc` in your app:
 
@@ -741,7 +741,7 @@ Example — view-only embed with minimal UI:
 
 ## 13. GitHub Actions Install Example
 
-In a private consumer repo, configure package auth before `npm ci`:
+Configure package auth before `npm ci`:
 
 ```yaml
 - uses: actions/setup-node@v4
@@ -754,5 +754,5 @@ In a private consumer repo, configure package auth before `npm ci`:
     NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-If the package lives in a different private repo or org, use a secret token with `read:packages` access instead of `GITHUB_TOKEN`.
+The workflow's built-in `GITHUB_TOKEN` is enough, since the package is public. Use a PAT secret with `read:packages` only if your CI runs somewhere that has no `GITHUB_TOKEN` (Vercel, Netlify, Render, a Docker build, etc.).
 
