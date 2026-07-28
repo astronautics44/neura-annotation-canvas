@@ -89,6 +89,7 @@ export default function Page() {
   const [labelVisibility, setLabelVisibility] = useState<LabelVisibility>("always");
   const [polylineFinishAction, setPolylineFinishAction] = useState<FinishAction>("right-click");
   const [countFinishAction, setCountFinishAction] = useState<FinishAction>("right-click");
+  const [enableActiveLabel, setEnableActiveLabel] = useState(true);
   const [edgeSplitMode, setEdgeSplitMode] = useState<EdgeSplitMode>("midpoint");
   const activePreset = SCALE_PRESETS[scalePreset]!;
   const annotations = useMemo(() => getAnnotations(engine), [engine]);
@@ -253,6 +254,19 @@ export default function Page() {
               <option value="anyPoint">anyPoint</option>
             </select>
           </label>
+
+          <label
+            title="Off = classic behaviour: the label popover opens for every shape"
+            style={{ fontSize: 11, color: lightTheme.textSecondary, display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}
+          >
+            <input
+              type="checkbox"
+              checked={enableActiveLabel}
+              onChange={(e) => setEnableActiveLabel(e.target.checked)}
+              style={{ cursor: "pointer", margin: 0 }}
+            />
+            Pinned class
+          </label>
         </div>
 
         {/* Feature hints */}
@@ -263,6 +277,10 @@ export default function Page() {
             <kbd style={kbdStyle}>P</kbd> polygon &nbsp;
             <kbd style={kbdStyle}>Y</kbd> polyline &nbsp;
             <kbd style={kbdStyle}>T</kbd> count
+          </span>
+          <span style={{ fontSize: 11, color: lightTheme.textMuted }}>
+            <kbd style={kbdStyle}>1</kbd>–<kbd style={kbdStyle}>9</kbd> pin class &nbsp;
+            <kbd style={kbdStyle}>0</kbd> unpin
           </span>
           <span style={{ fontSize: 11, color: lightTheme.textMuted }}>
             <kbd style={kbdStyle}>Ctrl+A</kbd> select all
@@ -291,6 +309,8 @@ export default function Page() {
           polylineFinishAction={polylineFinishAction}
           countFinishAction={countFinishAction}
           edgeSplitMode={edgeSplitMode}
+          enableActiveLabel={enableActiveLabel}
+          onActiveLabelChange={(id) => console.log("[annotation-engine] onActiveLabelChange", id)}
           dpi={activePreset.dpi > 0 ? activePreset.dpi : undefined}
           drawingScale={activePreset.dpi > 0 ? activePreset.scale : undefined}
           onDrawingScaleChange={(s) => console.log("[annotation-engine] onDrawingScaleChange", s)}
