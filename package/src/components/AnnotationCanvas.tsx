@@ -23,6 +23,8 @@ import { Toolbar } from "./Toolbar";
 import { LabelPanel } from "./LabelPanel";
 import { LabelPopover } from "./LabelPopover";
 import { ShapeOpsBar } from "./ShapeOpsBar";
+import { AnnotationChip } from "./AnnotationChip";
+import { AnnotationCard } from "./AnnotationCard";
 import {
   getAnnotationRings,
   hollowAnnotations,
@@ -83,6 +85,12 @@ interface Props {
    * - "hover+selected" — on hover OR when selected
    */
   labelVisibility?: "always" | "hover" | "selected" | "hover+selected";
+  /**
+   * How the label overlay is rendered on each annotation.
+   * - "chip" — compact inline chip with label text (default)
+   * - "card" — expanded detail card showing type, coordinates, size, confidence, etc.
+   */
+  labelDisplayMode?: "chip" | "card";
   /**
    * Gesture that commits a polyline in progress.
    * - "enter"        — press Enter to finish (default)
@@ -167,6 +175,7 @@ export function AnnotationCanvas({
   enableSelectAll = true,
   showFullscreen = true,
   labelVisibility = "always",
+  labelDisplayMode = "chip",
   polylineFinishAction = "enter",
   countFinishAction = "enter",
   edgeSplitMode = "midpoint",
@@ -355,7 +364,7 @@ export function AnnotationCanvas({
         source: "human" as const,
         points: a.points.map(([x, y]) => [x + offset[0], y + offset[1]] as [number, number]),
       })),
-  []);
+    []);
 
   const selectedAreaAnnotations = useCallback((): CanonicalAnnotation[] => {
     return selectedIds
@@ -427,7 +436,7 @@ export function AnnotationCanvas({
 
       // Redo: Cmd/Ctrl+Shift+Z  or  Ctrl+Y
       if (((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "z") ||
-          (e.ctrlKey && e.key === "y")) {
+        (e.ctrlKey && e.key === "y")) {
         e.preventDefault();
         handleRedo();
         return;
@@ -810,7 +819,7 @@ export function AnnotationCanvas({
           const { x, y, w, h } = bboxToKonva(ann.points);
           const handle = bboxHandles(x, y, w, h)[draggingHandle.handleIdx];
           if (handle) {
-            dispatch({ type: "UPDATE", payload: { ...ann, points: handle.resizeFn(dx, dy, ann.points as [[number,number],[number,number]]) } });
+            dispatch({ type: "UPDATE", payload: { ...ann, points: handle.resizeFn(dx, dy, ann.points as [[number, number], [number, number]]) } });
           }
         }
         setDraggingHandle({ ...draggingHandle, startImg: imgPos });
@@ -820,7 +829,7 @@ export function AnnotationCanvas({
     if (draggingVertex) {
       const ann = annotationsRef.current.find((a) => a.id === draggingVertex.annId);
       if (ann) {
-        dispatch({ type: "UPDATE", payload: { ...ann, points: ann.points.map((p, i) => i === draggingVertex.vertIdx ? imgPos : p) as [number,number][] } });
+        dispatch({ type: "UPDATE", payload: { ...ann, points: ann.points.map((p, i) => i === draggingVertex.vertIdx ? imgPos : p) as [number, number][] } });
         setDraggingVertex({ ...draggingVertex, startImg: imgPos });
       }
     }
@@ -1080,8 +1089,8 @@ export function AnnotationCanvas({
   }, [labels, onLabelsChange]);
 
   const popoverPos = (): { x: number; y: number } | null => {
-    if (!["bbox-pending","polygon-pending","polyline-pending","line-pending","point-pending","circle-pending","count-pending"].includes(draw.phase)) return null;
-    const pos = (draw as { pos: [number,number] }).pos;
+    if (!["bbox-pending", "polygon-pending", "polyline-pending", "line-pending", "point-pending", "circle-pending", "count-pending"].includes(draw.phase)) return null;
+    const pos = (draw as { pos: [number, number] }).pos;
     return { x: pos[0] * scale + stagePos.x, y: pos[1] * scale + stagePos.y };
   };
 
@@ -1121,10 +1130,10 @@ export function AnnotationCanvas({
 
   const stageCursor = isPanning ? "grabbing"
     : panMode ? "grab"
-    : spaceDown ? "grab"
-    : tool === "select" && !readonly ? "crosshair"
-    : tool === "select" ? "default"
-    : "crosshair";
+      : spaceDown ? "grab"
+        : tool === "select" && !readonly ? "crosshair"
+          : tool === "select" ? "default"
+            : "crosshair";
 
   // ---------------------------------------------------------------------------
   // Render annotations
@@ -1192,11 +1201,11 @@ export function AnnotationCanvas({
     // clearly distinguishable from unselected/hovered shapes (which never glow).
     const selectionGlow = isSelected
       ? {
-          shadowColor: resolved.accent,
-          shadowBlur: 16 / scale,
-          shadowOpacity: 1,
-          shadowOffset: { x: 0, y: 0 },
-        }
+        shadowColor: resolved.accent,
+        shadowBlur: 16 / scale,
+        shadowOpacity: 1,
+        shadowOffset: { x: 0, y: 0 },
+      }
       : {};
 
     const commonProps = {
@@ -1211,13 +1220,18 @@ export function AnnotationCanvas({
       onMouseLeave: () => setHoveredId(null),
     };
 
-    // "always" respects the 30% zoom floor (unreadable below that).
-    // Interactive modes show on demand regardless of zoom level.
-    const chipVisible =
+    // "always" mode should show the annotation overlay like previous labels did,
+    // while selected/hover modes show the overlay only on selected or hovered annotations.
+    const shouldShowOverlay =
       labelVisibility === "always" ? scale >= 0.3
-      : labelVisibility === "hover" ? isHovered
-      : labelVisibility === "selected" ? isSelected
-      : /* "hover+selected" */ isHovered || isSelected;
+        : labelVisibility === "selected" ? isSelected
+          : labelVisibility === "hover" ? isHovered
+            : labelVisibility === "hover+selected" ? isHovered || isSelected
+              : false;
+
+    const showChip = labelDisplayMode === "chip" && shouldShowOverlay;
+    const showDetailCard = labelDisplayMode === "card" && shouldShowOverlay;
+
     let chipX = 0, chipY = 0;
     if (ann.type === "bbox" || ann.type === "circle") {
       chipX = Math.min(ann.points[0]![0], ann.points[1]![0]);
@@ -1231,30 +1245,29 @@ export function AnnotationCanvas({
     }
 
     const chipLabel = lm?.displayName ?? ann.label;
-    const chipConf = ann.confidence !== undefined ? ` ${Math.round(ann.confidence * 100)}%` : "";
     const symbolSize = parseSymbolSize(ann.meta);
+    const chipConf = ann.confidence !== undefined ? ` ${Math.round(ann.confidence * 100)}%` : "";
     const chipSymbolSize = symbolSize ? ` ${formatSymbolSize(symbolSize)}` : "";
     const calculatedSize = formatAnnotationCalculatedSize(ann, dpi, drawingScale);
     const chipDim = calculatedSize ? ` ${calculatedSize}` : "";
-
     const chipText = chipLabel + chipConf + chipSymbolSize + chipDim;
-    // 8px per char is a safe overestimate for mixed system-ui + monospace content
-    const chipWidth = chipText.length * 8 / scale + 12 / scale;
 
-    const chip = chipVisible ? (
-      <Group x={chipX} y={chipY}>
-        <Rect
-          width={chipWidth}
-          height={18 / scale}
-          fill={hexToRgba(resolved.bgElevated, 0.9)}
-          stroke={hexToRgba(resolved.accent, 0.45)}
-          strokeWidth={1 / scale}
-          cornerRadius={4 / scale}
-        />
-        <Circle x={6 / scale} y={9 / scale} radius={3 / scale} fill={color} />
-        <Text x={12 / scale} y={3 / scale} text={chipText} fontSize={11 / scale} fill={resolved.textPrimary} fontFamily="system-ui" />
-      </Group>
+    const overlay = showChip ? (
+      <AnnotationChip x={chipX} y={chipY} scale={scale} text={chipText} theme={resolved} />
+    ) : showDetailCard ? (
+      <AnnotationCard
+        ann={ann}
+        anchorX={chipX}
+        anchorY={chipY}
+        scale={scale}
+        displayName={chipLabel}
+        theme={resolved}
+        dpi={dpi}
+        drawingScale={drawingScale}
+        imageBounds={img ? { width: img.width, height: img.height } : undefined}
+      />
     ) : null;
+
 
     if (ann.type === "bbox") {
       const { x, y, w, h } = bboxToKonva(ann.points);
@@ -1262,7 +1275,7 @@ export function AnnotationCanvas({
         return (
           <Group key={ann.id}>
             {renderCompoundArea(commonProps)}
-            {chip}
+            {overlay}
           </Group>
         );
       }
@@ -1289,7 +1302,7 @@ export function AnnotationCanvas({
               />
             );
           })}
-          {chip}
+          {overlay}
         </Group>
       );
     }
@@ -1301,7 +1314,7 @@ export function AnnotationCanvas({
         return (
           <Group key={ann.id}>
             {renderCompoundArea(commonProps)}
-            {chip}
+            {overlay}
           </Group>
         );
       }
@@ -1320,7 +1333,7 @@ export function AnnotationCanvas({
               }}
             />
           ))}
-          {chip}
+          {overlay}
         </Group>
       );
     }
@@ -1339,7 +1352,7 @@ export function AnnotationCanvas({
                 }}
               />
             ))}
-            {chip}
+            {overlay}
           </Group>
         );
       }
@@ -1361,7 +1374,7 @@ export function AnnotationCanvas({
               }}
             />
           ))}
-          {chip}
+          {overlay}
         </Group>
       );
     }
@@ -1385,7 +1398,7 @@ export function AnnotationCanvas({
               }}
             />
           ))}
-          {chip}
+          {overlay}
         </Group>
       );
     }
@@ -1401,7 +1414,7 @@ export function AnnotationCanvas({
             onMouseEnter={() => setHoveredId(ann.id)}
             onMouseLeave={() => setHoveredId(null)}
           />
-          {chip}
+          {overlay}
         </Group>
       );
     }
@@ -1454,8 +1467,8 @@ export function AnnotationCanvas({
       const lastPt = draw.pts[draw.pts.length - 1]!;
       const finishLabel =
         polylineFinishAction === "right-click" ? "Right-click" :
-        polylineFinishAction === "double-click" ? "Double-click" :
-        "Enter";
+          polylineFinishAction === "double-click" ? "Double-click" :
+            "Enter";
       const hint = draw.pts.length >= 2 ? `${finishLabel} to finish · Esc to cancel` : "Click to add points · Esc to cancel";
       const hintWidth = hint.length * 7 / scale + 12 / scale;
       return (
@@ -1496,8 +1509,8 @@ export function AnnotationCanvas({
     if (draw.phase === "count-drawing" && draw.pts.length > 0) {
       const finishLabel =
         countFinishAction === "right-click" ? "Right-click" :
-        countFinishAction === "double-click" ? "Double-click" :
-        "Enter";
+          countFinishAction === "double-click" ? "Double-click" :
+            "Enter";
       const countText = `${draw.pts.length} pt${draw.pts.length !== 1 ? "s" : ""} · ${finishLabel} to finish · Esc to cancel`;
       const hintWidth = countText.length * 7 / scale + 12 / scale;
       return (
@@ -1591,7 +1604,7 @@ export function AnnotationCanvas({
                 style={{ pointerEvents: "auto", display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", background: "var(--ae-bg-surface)", border: "1px solid var(--ae-border)", borderRadius: 8, color: "var(--ae-text-primary)", fontSize: 13, cursor: "pointer", boxShadow: "0 4px 16px rgba(0,0,0,0.4)", fontFamily: "inherit" }}
               >
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M1 6V1h5M10 1h5v5M15 10v5h-5M6 15H1v-5"/>
+                  <path d="M1 6V1h5M10 1h5v5M15 10v5h-5M6 15H1v-5" />
                 </svg>
                 Reset View
               </button>
@@ -1678,17 +1691,17 @@ export function AnnotationCanvas({
               <button title="Fit to screen (Ctrl+0)" onClick={fitToScreen} style={zoomBtnStyle}
                 onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--ae-bg-elevated)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-primary)"; }}
                 onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-secondary)"; }}>
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M1 6V1h5M10 1h5v5M15 10v5h-5M6 15H1v-5"/></svg>
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M1 6V1h5M10 1h5v5M15 10v5h-5M6 15H1v-5" /></svg>
               </button>
               <button title="Zoom out (Ctrl+-)" onClick={() => setScale((s) => Math.max(s / 1.2, MIN_ZOOM))} style={zoomBtnStyle}
                 onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--ae-bg-elevated)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-primary)"; }}
                 onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-secondary)"; }}>
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="7" cy="7" r="5"/><line x1="10.5" y1="10.5" x2="14" y2="14"/><line x1="4.5" y1="7" x2="9.5" y2="7"/></svg>
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="7" cy="7" r="5" /><line x1="10.5" y1="10.5" x2="14" y2="14" /><line x1="4.5" y1="7" x2="9.5" y2="7" /></svg>
               </button>
               <button title="Zoom in (Ctrl+=)" onClick={() => setScale((s) => Math.min(s * 1.2, MAX_ZOOM))} style={zoomBtnStyle}
                 onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--ae-bg-elevated)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-primary)"; }}
                 onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-secondary)"; }}>
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="7" cy="7" r="5"/><line x1="10.5" y1="10.5" x2="14" y2="14"/><line x1="7" y1="4.5" x2="7" y2="9.5"/><line x1="4.5" y1="7" x2="9.5" y2="7"/></svg>
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="7" cy="7" r="5" /><line x1="10.5" y1="10.5" x2="14" y2="14" /><line x1="7" y1="4.5" x2="7" y2="9.5" /><line x1="4.5" y1="7" x2="9.5" y2="7" /></svg>
               </button>
             </div>
           )}
@@ -1705,7 +1718,7 @@ export function AnnotationCanvas({
                 <button title="Edit drawing scale" onClick={() => setScaleEditing(true)} style={{ ...zoomBtnStyle, width: 16, height: 16 }}
                   onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--ae-bg-elevated)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-primary)"; }}
                   onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-secondary)"; }}>
-                  <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 2a2.12 2.12 0 0 1 3 3L5 14l-4 1 1-4Z"/></svg>
+                  <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 2a2.12 2.12 0 0 1 3 3L5 14l-4 1 1-4Z" /></svg>
                 </button>
               )}
             </div>
@@ -1750,8 +1763,8 @@ export function AnnotationCanvas({
               onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-secondary)"; }}
             >
               {isFullscreen
-                ? <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 1v4H1M11 1v4h4M1 11h4v4M11 11h4v4"/></svg>
-                : <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M1 6V1h5M10 1h5v5M15 10v5h-5M6 15H1v-5"/></svg>
+                ? <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 1v4H1M11 1v4h4M1 11h4v4M11 11h4v4" /></svg>
+                : <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M1 6V1h5M10 1h5v5M15 10v5h-5M6 15H1v-5" /></svg>
               }
             </button>
           )}
