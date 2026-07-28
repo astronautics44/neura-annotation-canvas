@@ -174,6 +174,7 @@ interface AnnotationCanvasProps {
 
   // Label chip visibility
   labelVisibility?: "always" | "hover" | "selected" | "hover+selected"; // default: "always"
+  labelDisplayMode?: "chip" | "card"; // compact chip or expanded detail card; default: "chip"
 
   // Polyline / Count
   polylineFinishAction?: "enter" | "right-click" | "double-click"; // default: "enter"
@@ -604,6 +605,42 @@ labelVisibility?: "always" | "hover" | "selected" | "hover+selected"
 
 // Show on hover or selection — best for dense drawings
 <AnnotationCanvas labelVisibility="hover+selected" ... />
+```
+
+### `labelDisplayMode` prop
+
+```typescript
+labelDisplayMode?: "chip" | "card"
+```
+
+Controls *what* the overlay looks like when `labelVisibility` decides it should be shown. The two props are independent — visibility governs *when*, display mode governs *what*.
+
+| Value    | Overlay                                                                                     |
+| -------- | ------------------------------------------------------------------------------------------- |
+| `"chip"` | Compact single-line chip: display name + confidence + symbol size + measured dimension (default) |
+| `"card"` | Expanded detail card anchored above the annotation                                            |
+
+The detail card renders a titled panel with a header row (display name) and a row per available field:
+
+| Row          | Shown when                | Value                                                   |
+| ------------ | ------------------------- | ------------------------------------------------------- |
+| `Type`       | always                    | annotation type (`bbox`, `polygon`, …)                  |
+| `Coords`     | always                    | top-left for bbox/circle, the point for `point`, centroid otherwise |
+| `Size`       | bbox / circle             | `w×h` in image pixels                                   |
+| `Points`     | polygon / polyline / line | vertex count                                            |
+| `Confidence` | `confidence` is defined   | rounded percentage                                      |
+| `Symbol`     | `meta.symbolSize` is set  | formatted manual symbol size                            |
+| `Measured`   | `dpi` + `drawingScale` set | real-world dimension                                    |
+
+The card is drawn in image space and scales inversely with zoom, so it stays a constant on-screen size. It flips below the annotation when there isn't room above, and clamps horizontally to stay inside the image bounds.
+
+```tsx
+// Default — compact chip
+<AnnotationCanvas labelDisplayMode="chip" ... />
+
+// Detail card, only for the annotation under the cursor —
+// keeps a dense drawing readable while giving full detail on demand
+<AnnotationCanvas labelDisplayMode="card" labelVisibility="hover" ... />
 ```
 
 ---
