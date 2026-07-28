@@ -55,13 +55,16 @@ npm run build:pkg   # builds the package only
 
 ## Publishing to GitHub Packages
 
-This repository publishes `@astronautics44/neura-annotation-canvas` to **GitHub Packages** as a **private** (`restricted`) package. Publishing runs automatically when a GitHub Release is published, or manually via **Actions → Publish Package → Run workflow**.
+This repository publishes `@astronautics44/neura-annotation-canvas` to **GitHub Packages** as a **public** package. Publishing runs automatically when a GitHub Release is published, or manually via **Actions → Publish Package → Run workflow**.
+
+> **Public here does not mean tokenless.** The GitHub Packages npm registry requires an access token for *every* download, including public packages — this is a registry limitation, not a setting. What "public" buys you is that consumers no longer need to be members of the `astronautics44` org: any GitHub account with a `read:packages` token can install. If you need a genuinely anonymous `npm install`, the package has to be published to npmjs.com instead.
 
 ### One-time org setup
 
 1. **Package scope must match the GitHub owner** of this repo. If the repo lives under `github.com/MyOrg/...`, rename the package to `@MyOrg/neura-annotation-canvas` everywhere (scope in `package.json`, `.npmrc`, workflow, and consumer apps).
 2. In the org: **Settings → Packages** — ensure members can publish/read packages.
 3. In the repo: **Settings → Actions → General** — allow workflows to write packages (the workflow uses `GITHUB_TOKEN` with `packages: write`).
+4. Make the package public: **org Packages tab → package → Package settings (gear) → Danger Zone → Change visibility → Public**. Package *permissions* inherit from the linked repo, but *visibility* does not — it must be set once, by hand, and cannot be reversed.
 
 ### Publish a new version
 
@@ -69,9 +72,9 @@ This repository publishes `@astronautics44/neura-annotation-canvas` to **GitHub 
 2. Commit and push.
 3. Create a GitHub Release tagged with that version (e.g. `v0.1.5`), or run the workflow manually from the Actions tab.
 
-### Install in another private repo (consumer)
+### Install in a consumer app
 
-Each developer/CI job needs a token with `read:packages` (and `repo` if the package repo is private).
+Each developer/CI job needs a GitHub token with `read:packages`. Org membership is **not** required — the package is public, so any GitHub account's token works.
 
 ```ini
 # consumer-app/.npmrc  (do not commit the token — use env var in CI)
