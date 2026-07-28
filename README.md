@@ -187,6 +187,7 @@ interface AnnotationCanvasProps {
   edgeSplitMode?: "midpoint" | "anyPoint"; // default: "midpoint"
 
   // Pinned annotation class — new shapes commit with this label, no popover
+  enableActiveLabel?: boolean;                          // master switch; default: true
   activeLabel?: string | null;                          // controlled pinned class
   defaultActiveLabel?: string;                          // initial pin when uncontrolled
   onActiveLabelChange?: (id: string | null) => void;    // fires when the pin changes
@@ -533,7 +534,7 @@ The theme values are injected as CSS custom properties on the root element (`--a
 | Redo            | `Cmd/Ctrl` + `Shift` + `Z` / `Ctrl+Y`, or ↻ button |
 | Cancel draw     | `Escape`                                          |
 | Delete selected | `Delete` or `Backspace` (works with multi-select) |
-| Pin class       | `1`–`9` pins the nth label in the registry        |
+| Pin class       | `1`–`9` pins the nth label (when `enableActiveLabel`) |
 | Unpin class     | `0`, or ✕ on the class chip                       |
 
 Zoom range: 5% – 2000%. The status bar shows the current zoom and cursor position in image pixel coordinates.
@@ -784,13 +785,22 @@ Appears after completing a draw gesture (or when relabeling). Supports:
 - If only one label exists and it has no `symbolSize` config, it is auto-selected — no popover shown
 - If the typed name doesn't match any label, a **Create "..."** row appears (disabled in `readonly` mode)
 - When the selected label has `symbolSize: "optional" | "required"`, a second step collects **Attribute**, **Value**, and **Unit** (see [Symbol size](#symbol-size-manual-takeoff-dimensions))
-- A **Keep for next shapes** checkbox pins the label being picked, so following shapes skip the popover entirely (see [Pinned annotation class](#pinned-annotation-class))
+- A **Keep for next shapes** checkbox pins the label being picked, so following shapes skip the popover entirely — only when `enableActiveLabel` is on (see [Pinned annotation class](#pinned-annotation-class))
 
 ---
 
 ## Pinned annotation class
 
 Drawing 40 doors should not mean answering 40 popovers. Pin a class and every shape drawn afterwards is committed with that label immediately — no popover, no extra click.
+
+The whole feature sits behind `enableActiveLabel`. Set it to `false` and the canvas behaves exactly as it always has — the label popover opens for every shape:
+
+```tsx
+// Classic behaviour — ask for a label every time
+<AnnotationCanvas enableActiveLabel={false} ... />
+```
+
+That switch removes the chip, the `1`–`9` / `0` hotkeys, the popover's "Keep for next shapes" checkbox, and promptless committing. `activeLabel` / `defaultActiveLabel` are ignored while it is off.
 
 ### Pinning a class
 
@@ -807,11 +817,20 @@ Pinning also switches to the label's `defaultTool` when that tool is present in 
 ### Props
 
 ```typescript
+enableActiveLabel?: boolean;                        // master switch; default: true
 activeLabel?: string | null;                        // controlled — canonicalClassId or null
 defaultActiveLabel?: string;                        // initial pin when uncontrolled
 onActiveLabelChange?: (id: string | null) => void;  // fires on chip, checkbox, or hotkey
-showActiveLabelBar?: boolean;                       // default: true
+showActiveLabelBar?: boolean;                       // chip only; default: true
 ```
+
+`enableActiveLabel` turns the feature on or off. `showActiveLabelBar` only hides the chip, keeping the hotkeys and the popover checkbox — use it when you render your own pinned-class control:
+
+| `enableActiveLabel` | `showActiveLabelBar` | Result                                              |
+| ------------------- | -------------------- | --------------------------------------------------- |
+| `true` (default)    | `true` (default)     | Full feature with the built-in chip                 |
+| `true`              | `false`              | Feature on, no chip — drive it via `activeLabel`    |
+| `false`             | *(ignored)*          | Classic behaviour: label popover on every shape     |
 
 Leave `activeLabel` out and the component owns the state. Pass it to drive the pin from your own UI:
 
@@ -835,6 +854,7 @@ const [pinned, setPinned] = useState<string | null>(null);
 - **A pinned class overrides `onPendingShapeCommit`.** Consumers with a custom label popover get promptless drawing too — the callback is not invoked while a class is pinned.
 - **Labels requiring a symbol size stay safe.** If the pinned label has `symbolSize: "required"` and no size was captured when it was pinned, the popover still opens for each shape. No annotation is ever committed without its required dimension. Pin the class through the chip (which collects the size once) to get promptless drawing for those labels.
 - Pinning has no effect in `readonly` mode, and the chip is hidden.
+- The pin starts empty unless you pass `defaultActiveLabel` — leaving `enableActiveLabel` at its default is behaviour-compatible for existing consumers until a user pins something.
 - Relabeling an existing annotation always opens the popover — the pin only applies to newly drawn shapes.
 
 ---

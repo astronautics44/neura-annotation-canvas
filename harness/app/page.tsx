@@ -89,6 +89,7 @@ export default function Page() {
   const [labelVisibility, setLabelVisibility] = useState<LabelVisibility>("always");
   const [polylineFinishAction, setPolylineFinishAction] = useState<FinishAction>("right-click");
   const [countFinishAction, setCountFinishAction] = useState<FinishAction>("right-click");
+  const [enableActiveLabel, setEnableActiveLabel] = useState(true);
   const [edgeSplitMode, setEdgeSplitMode] = useState<EdgeSplitMode>("midpoint");
   const activePreset = SCALE_PRESETS[scalePreset]!;
   const annotations = useMemo(() => getAnnotations(engine), [engine]);
@@ -253,6 +254,19 @@ export default function Page() {
               <option value="anyPoint">anyPoint</option>
             </select>
           </label>
+
+          <label
+            title="Off = classic behaviour: the label popover opens for every shape"
+            style={{ fontSize: 11, color: lightTheme.textSecondary, display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}
+          >
+            <input
+              type="checkbox"
+              checked={enableActiveLabel}
+              onChange={(e) => setEnableActiveLabel(e.target.checked)}
+              style={{ cursor: "pointer", margin: 0 }}
+            />
+            Pinned class
+          </label>
         </div>
 
         {/* Feature hints */}
@@ -295,6 +309,7 @@ export default function Page() {
           polylineFinishAction={polylineFinishAction}
           countFinishAction={countFinishAction}
           edgeSplitMode={edgeSplitMode}
+          enableActiveLabel={enableActiveLabel}
           onActiveLabelChange={(id) => console.log("[annotation-engine] onActiveLabelChange", id)}
           dpi={activePreset.dpi > 0 ? activePreset.dpi : undefined}
           drawingScale={activePreset.dpi > 0 ? activePreset.scale : undefined}

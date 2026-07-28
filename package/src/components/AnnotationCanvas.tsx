@@ -130,6 +130,13 @@ interface Props {
 
   // --- sticky class ---
   /**
+   * Master switch for the pinned-class feature — the chip, the 1–9 / 0 hotkeys,
+   * the popover's "keep for next shapes" checkbox, and promptless committing.
+   * When false the canvas asks for a label on every shape, as it always has.
+   * Default: true
+   */
+  enableActiveLabel?: boolean;
+  /**
    * Pins a label class so every shape drawn afterwards is committed with it and
    * the label popover never opens. Controlled — pass `onActiveLabelChange` to
    * track user edits. Omit entirely to let the component own the state.
@@ -139,7 +146,11 @@ interface Props {
   defaultActiveLabel?: string;
   /** Fires when the pinned class changes (picker, popover pin checkbox, hotkey). */
   onActiveLabelChange?: (canonicalClassId: string | null) => void;
-  /** Show the floating pinned-class chip above the canvas. Default: true */
+  /**
+   * Show the floating pinned-class chip above the canvas. Set false to keep the
+   * feature but drive it from your own UI via `activeLabel`. Ignored when
+   * `enableActiveLabel` is false. Default: true
+   */
   showActiveLabelBar?: boolean;
 
   /**
@@ -205,6 +216,7 @@ export function AnnotationCanvas({
   dpi,
   drawingScale: drawingScaleProp,
   onDrawingScaleChange,
+  enableActiveLabel = true,
   activeLabel: activeLabelProp,
   defaultActiveLabel,
   onActiveLabelChange,
@@ -271,14 +283,17 @@ export function AnnotationCanvas({
   const [labelPickerOpen, setLabelPickerOpen] = useState(false);
 
   const stickyControlled = activeLabelProp !== undefined;
-  const stickyLabel: StickyLabel | null = stickyControlled
-    ? activeLabelProp
-      ? stickyLabelState?.id === activeLabelProp ? stickyLabelState : { id: activeLabelProp }
-      : null
-    : stickyLabelState;
+  const stickyLabel: StickyLabel | null = !enableActiveLabel
+    ? null
+    : stickyControlled
+      ? activeLabelProp
+        ? stickyLabelState?.id === activeLabelProp ? stickyLabelState : { id: activeLabelProp }
+        : null
+      : stickyLabelState;
 
   /** Pin (or unpin, with null) a class and follow it with the label's default tool. */
   const setActiveLabel = useCallback((next: StickyLabel | null) => {
+    if (!enableActiveLabel) return;
     // Kept even when controlled — caches the symbol size the prop can't carry
     setStickyLabelState(next);
     setLabelPickerOpen(false);
@@ -290,7 +305,7 @@ export function AnnotationCanvas({
       setPanMode(false);
       setTool(dt);
     }
-  }, [labels, tools, onActiveLabelChange]);
+  }, [enableActiveLabel, labels, tools, onActiveLabelChange]);
 
   /** Toggle canvas visibility of a set of label classes, dropping any now-hidden
    *  annotations from the current selection so hidden shapes can't be edited. */
@@ -555,7 +570,7 @@ export function AnnotationCanvas({
       if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); onSave(annotationsRef.current); return; }
 
       // Pinned class: 1–9 pins the nth label, 0 unpins
-      if (!readonly && !e.metaKey && !e.ctrlKey && !e.altKey && /^[0-9]$/.test(e.key)) {
+      if (enableActiveLabel && !readonly && !e.metaKey && !e.ctrlKey && !e.altKey && /^[0-9]$/.test(e.key)) {
         if (e.key === "0") { setActiveLabel(null); return; }
         const lm = labels[Number(e.key) - 1];
         if (lm) { setActiveLabel({ id: lm.canonicalClassId }); return; }
@@ -621,7 +636,7 @@ export function AnnotationCanvas({
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp); };
-  }, [draw, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelId, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction, hiddenClasses, labels, setActiveLabel]);
+  }, [draw, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelId, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction, hiddenClasses, labels, setActiveLabel, enableActiveLabel]);
 
   // ---------------------------------------------------------------------------
   // Stage event handlers
@@ -1089,7 +1104,7 @@ export function AnnotationCanvas({
     : undefined;
   const stickySymbolSize = stickyLabel?.symbolSize;
   const stickyCommit = useMemo<{ label: string; symbolSize?: SymbolSize } | null>(() => {
-    if (!stickyLabelMap || readonly) return null;
+    if (!enableActiveLabel || !stickyLabelMap || readonly) return null;
     // A label that demands a symbol size can only skip the popover once one was
     // captured at pin time — otherwise it would commit incomplete data
     if (stickyLabelMap.symbolSize === "required" && !stickySymbolSize) return null;
@@ -1097,7 +1112,7 @@ export function AnnotationCanvas({
       label: stickyLabelMap.canonicalClassId,
       ...(stickySymbolSize ? { symbolSize: stickySymbolSize } : {}),
     };
-  }, [stickyLabelMap, stickySymbolSize, readonly]);
+  }, [enableActiveLabel, stickyLabelMap, stickySymbolSize, readonly]);
 
   const stickyCommitSessionRef = useRef<string | null>(null);
 
@@ -1661,7 +1676,7 @@ export function AnnotationCanvas({
           onRedo={handleRedo}
         />
         <div ref={containerRef} style={{ flex: 1, background: "var(--ae-bg-canvas)", position: "relative", overflow: "hidden", cursor: stageCursor }}>
-          {!readonly && showActiveLabelBar && (
+          {!readonly && enableActiveLabel && showActiveLabelBar && (
             <ActiveLabelBar
               active={stickyLabelMap}
               open={labelPickerOpen}
@@ -1723,7 +1738,7 @@ export function AnnotationCanvas({
             <LabelPopover
               labels={labels}
               position={pPos}
-              allowPin={!readonly}
+              allowPin={!readonly && enableActiveLabel}
               onSelect={(label, symbolSize, pin) => {
                 if (pin) setActiveLabel({ id: label, ...(symbolSize ? { symbolSize } : {}) });
                 handleLabelSelect(label, symbolSize);
@@ -1732,7 +1747,7 @@ export function AnnotationCanvas({
               onCreateLabel={readonly ? undefined : handleCreateLabel}
             />
           )}
-          {labelPickerOpen && !readonly && (
+          {labelPickerOpen && !readonly && enableActiveLabel && (
             <LabelPopover
               labels={labels}
               position={{ x: 8, y: 44 }}
