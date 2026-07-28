@@ -4,6 +4,7 @@ import React, {
   useReducer,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -23,6 +24,7 @@ import { Toolbar } from "./Toolbar";
 import { LabelPanel } from "./LabelPanel";
 import { LabelPopover } from "./LabelPopover";
 import { ShapeOpsBar } from "./ShapeOpsBar";
+import { ActiveLabelBar } from "./ActiveLabelBar";
 import { AnnotationChip } from "./AnnotationChip";
 import { AnnotationCard } from "./AnnotationCard";
 import {
@@ -126,9 +128,24 @@ interface Props {
   /** Fires when the user edits the scale in the status bar. */
   onDrawingScaleChange?: (scale: DrawingScale) => void;
 
+  // --- sticky class ---
+  /**
+   * Pins a label class so every shape drawn afterwards is committed with it and
+   * the label popover never opens. Controlled — pass `onActiveLabelChange` to
+   * track user edits. Omit entirely to let the component own the state.
+   */
+  activeLabel?: string | null;
+  /** Initial pinned class when `activeLabel` is not controlled. */
+  defaultActiveLabel?: string;
+  /** Fires when the pinned class changes (picker, popover pin checkbox, hotkey). */
+  onActiveLabelChange?: (canonicalClassId: string | null) => void;
+  /** Show the floating pinned-class chip above the canvas. Default: true */
+  showActiveLabelBar?: boolean;
+
   /**
    * When provided, replaces the built-in label popover for newly drawn shapes.
    * Resolve with label metadata to commit the shape, or null to cancel.
+   * Skipped entirely while a class is pinned — the pinned label wins.
    */
   onPendingShapeCommit?: (context: {
     geometryType: string;
@@ -161,6 +178,12 @@ function isPendingShapePhase(phase: DrawState["phase"]): phase is PendingShapePh
   return (PENDING_SHAPE_PHASES as readonly string[]).includes(phase);
 }
 
+/** The pinned class, plus the symbol size captured when it was pinned. */
+interface StickyLabel {
+  id: string;
+  symbolSize?: SymbolSize;
+}
+
 export function AnnotationCanvas({
   image,
   labels: labelsProp,
@@ -182,6 +205,10 @@ export function AnnotationCanvas({
   dpi,
   drawingScale: drawingScaleProp,
   onDrawingScaleChange,
+  activeLabel: activeLabelProp,
+  defaultActiveLabel,
+  onActiveLabelChange,
+  showActiveLabelBar = true,
   onPendingShapeCommit,
   className,
   theme: themeProp,
@@ -231,6 +258,39 @@ export function AnnotationCanvas({
   const [marquee, setMarquee] = useState<{ start: [number, number]; cur: [number, number]; additive: boolean } | null>(null);
   /** Label class ids whose annotations are hidden from the canvas (list filter). */
   const [hiddenClasses, setHiddenClasses] = useState<Set<string>>(new Set());
+
+  /**
+   * Pinned annotation class. While set, a finished shape is committed straight
+   * away with this label instead of opening the label popover. The symbol size
+   * is remembered alongside it so labels that require one stay promptless too.
+   */
+  const [stickyLabelState, setStickyLabelState] = useState<StickyLabel | null>(
+    defaultActiveLabel ? { id: defaultActiveLabel } : null,
+  );
+  /** Whether the pinned-class dropdown is open. */
+  const [labelPickerOpen, setLabelPickerOpen] = useState(false);
+
+  const stickyControlled = activeLabelProp !== undefined;
+  const stickyLabel: StickyLabel | null = stickyControlled
+    ? activeLabelProp
+      ? stickyLabelState?.id === activeLabelProp ? stickyLabelState : { id: activeLabelProp }
+      : null
+    : stickyLabelState;
+
+  /** Pin (or unpin, with null) a class and follow it with the label's default tool. */
+  const setActiveLabel = useCallback((next: StickyLabel | null) => {
+    // Kept even when controlled — caches the symbol size the prop can't carry
+    setStickyLabelState(next);
+    setLabelPickerOpen(false);
+    onActiveLabelChange?.(next?.id ?? null);
+    if (!next) return;
+    const lm = labels.find((l) => l.canonicalClassId === next.id);
+    const dt = lm?.defaultTool;
+    if (dt && (!tools || tools.includes(dt))) {
+      setPanMode(false);
+      setTool(dt);
+    }
+  }, [labels, tools, onActiveLabelChange]);
 
   /** Toggle canvas visibility of a set of label classes, dropping any now-hidden
    *  annotations from the current selection so hidden shapes can't be edited. */
@@ -494,6 +554,14 @@ export function AnnotationCanvas({
       if ((e.metaKey || e.ctrlKey) && e.key === "-") { e.preventDefault(); setScale((s) => Math.max(s / 1.2, MIN_ZOOM)); return; }
       if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); onSave(annotationsRef.current); return; }
 
+      // Pinned class: 1–9 pins the nth label, 0 unpins
+      if (!readonly && !e.metaKey && !e.ctrlKey && !e.altKey && /^[0-9]$/.test(e.key)) {
+        if (e.key === "0") { setActiveLabel(null); return; }
+        const lm = labels[Number(e.key) - 1];
+        if (lm) { setActiveLabel({ id: lm.canonicalClassId }); return; }
+        return;
+      }
+
       if (e.key === "h" || e.key === "H") { setPanMode((p) => !p); setDraw({ phase: "idle" }); return; }
       if (e.key === "Escape") { setMarquee(null); setPanMode(false); setTool("select"); setDraw({ phase: "idle" }); setRelabelId(null); return; }
       if (e.key === "v" || e.key === "V") { setPanMode(false); setTool("select"); setDraw({ phase: "idle" }); return; }
@@ -553,7 +621,7 @@ export function AnnotationCanvas({
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp); };
-  }, [draw, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelId, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction, hiddenClasses]);
+  }, [draw, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelId, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction, hiddenClasses, labels, setActiveLabel]);
 
   // ---------------------------------------------------------------------------
   // Stage event handlers
@@ -1015,10 +1083,43 @@ export function AnnotationCanvas({
     setDraw({ phase: "idle" });
   }, [draw, dispatchAndNotify, snapshot]);
 
+  /** Resolved pinned label, or null when the popover still has to be shown. */
+  const stickyLabelMap = stickyLabel
+    ? labels.find((l) => l.canonicalClassId === stickyLabel.id)
+    : undefined;
+  const stickySymbolSize = stickyLabel?.symbolSize;
+  const stickyCommit = useMemo<{ label: string; symbolSize?: SymbolSize } | null>(() => {
+    if (!stickyLabelMap || readonly) return null;
+    // A label that demands a symbol size can only skip the popover once one was
+    // captured at pin time — otherwise it would commit incomplete data
+    if (stickyLabelMap.symbolSize === "required" && !stickySymbolSize) return null;
+    return {
+      label: stickyLabelMap.canonicalClassId,
+      ...(stickySymbolSize ? { symbolSize: stickySymbolSize } : {}),
+    };
+  }, [stickyLabelMap, stickySymbolSize, readonly]);
+
+  const stickyCommitSessionRef = useRef<string | null>(null);
+
+  // Pinned class: commit the finished shape immediately, no popover
+  useEffect(() => {
+    if (!stickyCommit || !isPendingShapePhase(draw.phase)) {
+      if (!isPendingShapePhase(draw.phase)) stickyCommitSessionRef.current = null;
+      return;
+    }
+    const pos = (draw as { pos: [number, number] }).pos;
+    const sessionId = `${draw.phase}:${pos[0]},${pos[1]}`;
+    if (stickyCommitSessionRef.current === sessionId) return;
+    stickyCommitSessionRef.current = sessionId;
+
+    commitPendingShape(draw, stickyCommit);
+    setDraw({ phase: "idle" });
+  }, [draw, stickyCommit, commitPendingShape]);
+
   const shapeCommitSessionRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!onPendingShapeCommit || !isPendingShapePhase(draw.phase)) {
+    if (stickyCommit || !onPendingShapeCommit || !isPendingShapePhase(draw.phase)) {
       if (!isPendingShapePhase(draw.phase)) {
         shapeCommitSessionRef.current = null;
       }
@@ -1560,6 +1661,14 @@ export function AnnotationCanvas({
           onRedo={handleRedo}
         />
         <div ref={containerRef} style={{ flex: 1, background: "var(--ae-bg-canvas)", position: "relative", overflow: "hidden", cursor: stageCursor }}>
+          {!readonly && showActiveLabelBar && (
+            <ActiveLabelBar
+              active={stickyLabelMap}
+              open={labelPickerOpen}
+              onToggle={() => setLabelPickerOpen((o) => !o)}
+              onClear={() => setActiveLabel(null)}
+            />
+          )}
           {!readonly && (
             <ShapeOpsBar
               count={selectedIds.length}
@@ -1610,13 +1719,29 @@ export function AnnotationCanvas({
               </button>
             </div>
           )}
-          {pPos && !onPendingShapeCommit && (
+          {pPos && !onPendingShapeCommit && !stickyCommit && (
             <LabelPopover
               labels={labels}
               position={pPos}
-              onSelect={handleLabelSelect}
+              allowPin={!readonly}
+              onSelect={(label, symbolSize, pin) => {
+                if (pin) setActiveLabel({ id: label, ...(symbolSize ? { symbolSize } : {}) });
+                handleLabelSelect(label, symbolSize);
+              }}
               onCancel={handlePopoverCancel}
               onCreateLabel={readonly ? undefined : handleCreateLabel}
+            />
+          )}
+          {labelPickerOpen && !readonly && (
+            <LabelPopover
+              labels={labels}
+              position={{ x: 8, y: 44 }}
+              {...(stickyLabel?.symbolSize ? { initialSymbolSize: stickyLabel.symbolSize } : {})}
+              onSelect={(label, symbolSize) =>
+                setActiveLabel({ id: label, ...(symbolSize ? { symbolSize } : {}) })
+              }
+              onCancel={() => setLabelPickerOpen(false)}
+              onCreateLabel={handleCreateLabel}
             />
           )}
           {relabelPos && !pPos && (() => {

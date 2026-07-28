@@ -265,6 +265,10 @@ export default function Page() {
             <kbd style={kbdStyle}>T</kbd> count
           </span>
           <span style={{ fontSize: 11, color: lightTheme.textMuted }}>
+            <kbd style={kbdStyle}>1</kbd>–<kbd style={kbdStyle}>9</kbd> pin class &nbsp;
+            <kbd style={kbdStyle}>0</kbd> unpin
+          </span>
+          <span style={{ fontSize: 11, color: lightTheme.textMuted }}>
             <kbd style={kbdStyle}>Ctrl+A</kbd> select all
           </span>
           <span style={{ fontSize: 11, color: lightTheme.textMuted }}>
@@ -291,6 +295,7 @@ export default function Page() {
           polylineFinishAction={polylineFinishAction}
           countFinishAction={countFinishAction}
           edgeSplitMode={edgeSplitMode}
+          onActiveLabelChange={(id) => console.log("[annotation-engine] onActiveLabelChange", id)}
           dpi={activePreset.dpi > 0 ? activePreset.dpi : undefined}
           drawingScale={activePreset.dpi > 0 ? activePreset.scale : undefined}
           onDrawingScaleChange={(s) => console.log("[annotation-engine] onDrawingScaleChange", s)}

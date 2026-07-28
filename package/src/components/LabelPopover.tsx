@@ -10,11 +10,16 @@ import {
 interface Props {
   labels: LabelMap[];
   position: { x: number; y: number };
-  onSelect: (canonicalClassId: string, symbolSize?: SymbolSize) => void;
+  /** `pin` is true when the user asked to reuse this label for subsequent shapes. */
+  onSelect: (canonicalClassId: string, symbolSize?: SymbolSize, pin?: boolean) => void;
   onCancel: () => void;
   onCreateLabel?: ((displayName: string) => string) | undefined;
   /** Pre-fill symbol size fields when relabeling an existing annotation. */
   initialSymbolSize?: SymbolSize;
+  /** Show the "keep for next shapes" checkbox. Only meaningful while drawing. */
+  allowPin?: boolean;
+  /** Initial state of the pin checkbox. */
+  pinned?: boolean;
   /**
    * How `position` is interpreted. Default "absolute" positions relative to the
    * nearest positioned ancestor (used for canvas-relative popovers). "fixed"
@@ -60,8 +65,11 @@ export function LabelPopover({
   onCreateLabel,
   initialSymbolSize,
   positionStrategy = "absolute",
+  allowPin = false,
+  pinned = false,
 }: Props) {
   const [phase, setPhase] = useState<Phase>("pick-label");
+  const [pin, setPin] = useState(pinned);
   const [pickedLabel, setPickedLabel] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
@@ -136,7 +144,7 @@ export function LabelPopover({
       }
       setPhase("symbol-size");
     } else {
-      onSelect(canonicalClassId);
+      onSelect(canonicalClassId, undefined, pin);
     }
   };
 
@@ -185,12 +193,12 @@ export function LabelPopover({
     if (!pickedLabel) return;
     const required = pickedLabelMap?.symbolSize === "required";
     if (skip && !required) {
-      onSelect(pickedLabel);
+      onSelect(pickedLabel, undefined, pin);
       return;
     }
     const size = buildSymbolSize();
     if (!size) return;
-    onSelect(pickedLabel, size);
+    onSelect(pickedLabel, size, pin);
   };
 
   const handleSymbolSizeKeyDown = (e: React.KeyboardEvent) => {
@@ -439,6 +447,32 @@ export function LabelPopover({
             )}
           </div>
         </div>
+      )}
+
+      {allowPin && (
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "6px 12px",
+            borderTop: "1px solid var(--ae-border-subtle)",
+            background: "var(--ae-bg-base)",
+            fontSize: 11,
+            color: pin ? "var(--ae-text-primary)" : "var(--ae-text-secondary)",
+            cursor: "pointer",
+            userSelect: "none",
+          }}
+          title="Reuse this label for every shape you draw next — no more prompts"
+        >
+          <input
+            type="checkbox"
+            checked={pin}
+            onChange={(e) => setPin(e.target.checked)}
+            style={{ accentColor: "var(--ae-accent)", cursor: "pointer", margin: 0 }}
+          />
+          Keep for next shapes
+        </label>
       )}
     </div>
   );
