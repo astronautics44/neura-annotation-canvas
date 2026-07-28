@@ -23,6 +23,8 @@ import { Toolbar } from "./Toolbar";
 import { LabelPanel } from "./LabelPanel";
 import { LabelPopover } from "./LabelPopover";
 import { ShapeOpsBar } from "./ShapeOpsBar";
+import { AnnotationChip } from "./AnnotationChip";
+import { AnnotationCard } from "./AnnotationCard";
 import {
   getAnnotationRings,
   hollowAnnotations,
@@ -1243,96 +1245,28 @@ export function AnnotationCanvas({
     }
 
     const chipLabel = lm?.displayName ?? ann.label;
-    const chipConf = ann.confidence !== undefined ? ` ${Math.round(ann.confidence * 100)}%` : "";
     const symbolSize = parseSymbolSize(ann.meta);
+    const chipConf = ann.confidence !== undefined ? ` ${Math.round(ann.confidence * 100)}%` : "";
     const chipSymbolSize = symbolSize ? ` ${formatSymbolSize(symbolSize)}` : "";
     const calculatedSize = formatAnnotationCalculatedSize(ann, dpi, drawingScale);
     const chipDim = calculatedSize ? ` ${calculatedSize}` : "";
-
     const chipText = chipLabel + chipConf + chipSymbolSize + chipDim;
-    const chipWidth = Math.min(Math.max(chipText.length * 8 / scale + 16 / scale, 50 / scale), 240 / scale);
-    const chipHeight = 18 / scale;
 
-    const chip = showChip ? (
-      <Group x={chipX} y={chipY}>
-        <Rect
-          x={0} y={0}
-          width={chipWidth}
-          height={chipHeight}
-          fill={hexToRgba(resolved.bgElevated, 0.95)}
-          stroke={hexToRgba(resolved.border, 0.55)}
-          strokeWidth={1 / scale}
-          cornerRadius={8 / scale}
-        />
-        <Text x={8 / scale} y={1 / scale} text={chipText} fontSize={11 / scale} fill={resolved.textPrimary} fontFamily="system-ui" />
-      </Group>
+    const overlay = showChip ? (
+      <AnnotationChip x={chipX} y={chipY} scale={scale} text={chipText} theme={resolved} />
+    ) : showDetailCard ? (
+      <AnnotationCard
+        ann={ann}
+        anchorX={chipX}
+        anchorY={chipY}
+        scale={scale}
+        displayName={chipLabel}
+        theme={resolved}
+        dpi={dpi}
+        drawingScale={drawingScale}
+        imageBounds={img ? { width: img.width, height: img.height } : undefined}
+      />
     ) : null;
-
-    const detailCard = showDetailCard ? (() => {
-      const cardWidth = 180 / scale;
-      const padding = 10 / scale;
-      const headerHeight = 22 / scale;
-      const lineHeight = 16 / scale;
-
-      let coordValue = "";
-      let sizeValue = "";
-      if (ann.type === "bbox" || ann.type === "circle") {
-        const { x, y, w, h } = bboxToKonva(ann.points);
-        coordValue = `${Math.round(x)}, ${Math.round(y)}`;
-        sizeValue = `${Math.round(w)}×${Math.round(h)}`;
-      } else if (ann.type === "point") {
-        const [x, y] = ann.points[0]!;
-        coordValue = `${Math.round(x)}, ${Math.round(y)}`;
-      } else {
-        const c = centroid(ann.points);
-        coordValue = `${Math.round(c[0])}, ${Math.round(c[1])}`;
-        if (ann.type === "polygon" || ann.type === "polyline" || ann.type === "line") {
-          sizeValue = `${ann.points.length} pts`;
-        }
-      }
-
-      const rows = [
-        { label: "Type", value: ann.type },
-        coordValue ? { label: "Coords", value: coordValue } : null,
-        sizeValue ? { label: ann.type === "bbox" || ann.type === "circle" ? "Size" : "Points", value: sizeValue } : null,
-        ann.confidence !== undefined ? { label: "Confidence", value: `${Math.round(ann.confidence * 100)}%` } : null,
-        symbolSize ? { label: "Symbol", value: formatSymbolSize(symbolSize) } : null,
-        calculatedSize ? { label: "Measured", value: calculatedSize } : null,
-      ].filter((r): r is { label: string; value: string } => r != null);
-
-      const cardHeight = headerHeight + rows.length * lineHeight + padding * 1.5;
-
-      let cardX = chipX;
-      let cardY = chipY - cardHeight - 8 / scale;
-      if (img) {
-        cardX = Math.max(4 / scale, Math.min(cardX, img.width - cardWidth - 4 / scale));
-        if (cardY < 4 / scale) {
-          cardY = chipY + 8 / scale;
-        }
-      }
-
-      return (
-        <Group x={cardX} y={cardY}>
-          <Rect
-            width={cardWidth} height={cardHeight}
-            fill={hexToRgba(resolved.bgElevated, 0.95)}
-            stroke={hexToRgba(resolved.border, 0.55)}
-            strokeWidth={1 / scale}
-            cornerRadius={10 / scale}
-          />
-          <Text x={padding} y={padding / 2} text={chipLabel} fontSize={12 / scale} fontStyle="bold" fill={resolved.textPrimary} fontFamily="system-ui" />
-          <Line points={[padding, headerHeight, cardWidth - padding, headerHeight]} stroke={hexToRgba(resolved.border, 0.55)} strokeWidth={1 / scale} />
-          {rows.map((row, i) => (
-            <Text key={i} x={padding} y={headerHeight + padding / 2 + i * lineHeight}
-              text={`${row.label}: ${row.value}`}
-              fontSize={11 / scale} fill={resolved.textSecondary} fontFamily="system-ui"
-            />
-          ))}
-        </Group>
-      );
-    })() : null;
-
-    const overlay = showChip ? chip : detailCard;
 
 
     if (ann.type === "bbox") {
