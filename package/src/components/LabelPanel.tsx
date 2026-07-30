@@ -6,6 +6,7 @@ import { LabelPopover } from "./LabelPopover";
 import { formatSymbolSizeLabel, parseSymbolSize } from "../utils/symbolSize";
 import {
   formatAnnotationCalculatedSize,
+  formatAnnotationPerimeter,
   type DrawingScaleInput,
 } from "../utils/dimensions";
 
@@ -55,10 +56,15 @@ export function LabelPanel({
     const firstId = selectedIds[0]!;
     const ann = annotations.find((a) => a.id === firstId);
     if (ann) {
+      // Annotations whose label is not in the registry live in the unknown
+      // bucket, which collapses under its own sentinel key.
+      const key = labels.some((l) => l.canonicalClassId === ann.label)
+        ? ann.label
+        : UNGROUPED_KEY;
       setCollapsed((prev) => {
-        if (!prev.has(ann.label)) return prev;
+        if (!prev.has(key)) return prev;
         const next = new Set(prev);
-        next.delete(ann.label);
+        next.delete(key);
         return next;
       });
     }
@@ -172,6 +178,27 @@ export function LabelPanel({
     });
   };
 
+  // ── Global collapse ──
+  // Keys of every group currently rendered, so "collapse all" also folds the
+  // unknown-label bucket and respects the active filter.
+  const groupKeys = useMemo(() => {
+    const keys = grouped.map((g) => g.lm.canonicalClassId);
+    if (ungrouped.length > 0) keys.push(UNGROUPED_KEY);
+    return keys;
+  }, [grouped, ungrouped.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  const allCollapsed =
+    groupKeys.length > 0 && groupKeys.every((k) => collapsed.has(k));
+  const toggleCollapseAll = () => {
+    setCollapsed((prev) => {
+      if (allCollapsed) {
+        const next = new Set(prev);
+        groupKeys.forEach((k) => next.delete(k));
+        return next;
+      }
+      return new Set([...prev, ...groupKeys]);
+    });
+  };
+
   return (
     <div
       ref={panelRef}
@@ -224,6 +251,38 @@ export function LabelPanel({
             Annotations
           </span>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {groupKeys.length > 0 && (
+              <button
+                title={allCollapsed ? "Expand all classes" : "Collapse all classes"}
+                onClick={toggleCollapseAll}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 22,
+                  height: 22,
+                  background: "none",
+                  border: "1px solid var(--ae-border)",
+                  borderRadius: 6,
+                  color: "var(--ae-text-secondary)",
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+              >
+                <svg
+                  width="10"
+                  height="10"
+                  viewBox="0 0 8 8"
+                  fill="none"
+                  style={{
+                    transform: allCollapsed ? "rotate(-90deg)" : "rotate(0deg)",
+                    transition: "transform 0.15s",
+                  }}
+                >
+                  <path d="M1 2.5L4 5.5L7 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            )}
             {onVisibilityChange && presentLabelIds.size > 0 && (
               <button
                 title={allHidden ? "Show all classes" : "Hide all classes"}
@@ -488,10 +547,13 @@ export function LabelPanel({
           const unknownHidden =
             ungroupedLabelIds.length > 0 &&
             ungroupedLabelIds.every((id) => hidden.has(id));
+          const unknownCollapsed = collapsed.has(UNGROUPED_KEY);
           return (
           <div style={{ opacity: unknownHidden ? 0.45 : 1 }}>
             <div
+              onClick={() => toggleCollapse(UNGROUPED_KEY)}
               style={{
+                cursor: "pointer",
                 position: "sticky",
                 top: 0,
                 zIndex: 1,
@@ -511,14 +573,31 @@ export function LabelPanel({
               {onVisibilityChange && (
                 <button
                   title={unknownHidden ? "Show on canvas" : "Hide from canvas"}
-                  onClick={() => setClassesHidden(ungroupedLabelIds, !unknownHidden)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setClassesHidden(ungroupedLabelIds, !unknownHidden);
+                  }}
                   style={eyeBtn}
                 >
                   <EyeIcon open={!unknownHidden} />
                 </button>
               )}
+              <svg
+                width="8"
+                height="8"
+                viewBox="0 0 8 8"
+                fill="none"
+                style={{
+                  flexShrink: 0,
+                  color: "var(--ae-text-muted)",
+                  transform: unknownCollapsed ? "rotate(-90deg)" : "rotate(0deg)",
+                  transition: "transform 0.15s",
+                }}
+              >
+                <path d="M1 2.5L4 5.5L7 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             </div>
-            {ungrouped.map((ann) => (
+            {!unknownCollapsed && ungrouped.map((ann) => (
               <AnnotationRow
                 key={ann.id}
                 ann={ann}
@@ -605,7 +684,16 @@ function AnnotationRow({
         dimensionContext.drawingScale,
       )
     : "";
-  const hasSizes = Boolean(symbolSize || calculatedSize);
+  const perimeter = dimensionContext
+    ? formatAnnotationPerimeter(
+        ann,
+        dimensionContext.dpi,
+        dimensionContext.drawingScale,
+      )
+    : "";
+  const sizeLineCount =
+    (calculatedSize ? 1 : 0) + (perimeter ? 1 : 0) + (symbolSize ? 1 : 0);
+  const hasSizes = sizeLineCount > 0;
 
   return (
     <div
@@ -630,7 +718,7 @@ function AnnotationRow({
           ? "2px solid var(--ae-accent)"
           : "2px solid transparent",
         transition: "background 0.08s",
-        minHeight: hasSizes ? (symbolSize && calculatedSize ? 54 : 42) : 28,
+        minHeight: hasSizes ? 28 + 14 * sizeLineCount : 28,
       }}
     >
       <div
@@ -726,7 +814,7 @@ function AnnotationRow({
         )}
       </div>
 
-      {(calculatedSize || symbolSize) && (
+      {hasSizes && (
         <div
           style={{
             display: "flex",
@@ -739,12 +827,20 @@ function AnnotationRow({
           }}
         >
           {calculatedSize && <span>{calculatedSize}</span>}
+          {perimeter && (
+            <span style={{ color: "var(--ae-text-secondary)" }}>
+              P {perimeter}
+            </span>
+          )}
           {symbolSize && <span>{formatSymbolSizeLabel(symbolSize)}</span>}
         </div>
       )}
     </div>
   );
 }
+
+/** Collapse key for the unknown-label bucket — no real class id can collide with it. */
+const UNGROUPED_KEY = "__ungrouped__";
 
 const EMPTY_SET: ReadonlySet<string> = new Set();
 

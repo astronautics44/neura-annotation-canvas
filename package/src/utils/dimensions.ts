@@ -1,6 +1,6 @@
 import type { CanonicalAnnotation } from "../types/canonical";
 import { bboxToKonva } from "../components/canvasHelpers";
-import { annotationPixelArea } from "./booleanOps";
+import { annotationPixelArea, annotationPixelPerimeter, isAreaAnnotation } from "./booleanOps";
 
 export type DrawingScaleUnit = "mm" | "cm" | "m" | "in" | "ft";
 
@@ -21,19 +21,57 @@ export function getRealUnitsPerPixel(
   return realUnitsPerPaperInch / dpi;
 }
 
+/** A real-world quantity after unit promotion. `unit` is bare (no `²`) — see `RealMeasurement.text`. */
+export interface RealValue {
+  value: number;
+  unit: string;
+}
+
+function roundReal(val: number): string {
+  return val.toFixed(val < 10 ? 2 : 1);
+}
+
+/** Real-world length from a pixel value + drawing scale. Null when scale is not configured. */
+export function realLengthFromPixels(
+  pixels: number,
+  dpi: number | undefined,
+  drawingScale: DrawingScaleInput | undefined,
+): RealValue | null {
+  const realUnitsPerPixel = getRealUnitsPerPixel(dpi, drawingScale);
+  if (realUnitsPerPixel === null || !drawingScale) return null;
+  let value = pixels * realUnitsPerPixel;
+  let unit: string = drawingScale.unit;
+  if (unit === "mm" && value >= 1000) { value /= 1000; unit = "m"; }
+  else if (unit === "cm" && value >= 100) { value /= 100; unit = "m"; }
+  else if (unit === "in" && value >= 12) { value /= 12; unit = "ft"; }
+  return { value, unit };
+}
+
+/** Real-world area from a pixel² value + drawing scale. Null when scale is not configured. */
+export function realAreaFromPixels(
+  pixelArea: number,
+  dpi: number | undefined,
+  drawingScale: DrawingScaleInput | undefined,
+): RealValue | null {
+  const realUnitsPerPixel = getRealUnitsPerPixel(dpi, drawingScale);
+  if (realUnitsPerPixel === null || !drawingScale) return null;
+  let value = pixelArea * realUnitsPerPixel * realUnitsPerPixel;
+  let unit: string = drawingScale.unit;
+  // Same promotion thresholds as realLengthFromPixels, squared
+  if (unit === "mm" && value >= 1_000_000) { value /= 1_000_000; unit = "m"; }
+  else if (unit === "cm" && value >= 10_000) { value /= 10_000; unit = "m"; }
+  else if (unit === "in" && value >= 144) { value /= 144; unit = "ft"; }
+  return { value, unit };
+}
+
 export function formatDimFromPixels(
   pixels: number,
   dpi: number | undefined,
   drawingScale: DrawingScaleInput | undefined,
 ): string {
-  const realUnitsPerPixel = getRealUnitsPerPixel(dpi, drawingScale);
-  if (realUnitsPerPixel === null || !drawingScale) return "";
-  let val = pixels * realUnitsPerPixel;
-  let unit = drawingScale.unit;
-  if (unit === "mm" && val >= 1000) { val /= 1000; unit = "m"; }
-  else if (unit === "cm" && val >= 100) { val /= 100; unit = "m"; }
-  else if (unit === "in" && val >= 12) { val /= 12; unit = "ft"; }
-  return `${val.toFixed(val < 10 ? 2 : 1)}${unit}`;
+  const real = realLengthFromPixels(pixels, dpi, drawingScale);
+  if (!real) return "";
+  return `${roundReal(real.value)}${real.unit}`;
 }
 
 /** Real-world area from a pixel² value + drawing scale. Empty when scale is not configured. */
@@ -42,15 +80,9 @@ export function formatAreaFromPixels(
   dpi: number | undefined,
   drawingScale: DrawingScaleInput | undefined,
 ): string {
-  const realUnitsPerPixel = getRealUnitsPerPixel(dpi, drawingScale);
-  if (realUnitsPerPixel === null || !drawingScale) return "";
-  let val = pixelArea * realUnitsPerPixel * realUnitsPerPixel;
-  let unit: string = drawingScale.unit;
-  // Same promotion thresholds as formatDimFromPixels, squared
-  if (unit === "mm" && val >= 1_000_000) { val /= 1_000_000; unit = "m"; }
-  else if (unit === "cm" && val >= 10_000) { val /= 10_000; unit = "m"; }
-  else if (unit === "in" && val >= 144) { val /= 144; unit = "ft"; }
-  return `${val.toFixed(val < 10 ? 2 : 1)}${unit}²`;
+  const real = realAreaFromPixels(pixelArea, dpi, drawingScale);
+  if (!real) return "";
+  return `${roundReal(real.value)}${real.unit}²`;
 }
 
 /** Real-world size from pixel geometry + drawing scale. Empty when scale is not configured.
@@ -81,13 +113,19 @@ export function formatAnnotationCalculatedSize(
     return formatDimFromPixels(Math.hypot(dx, dy), dpi, drawingScale);
   }
   if (ann.type === "polyline") {
-    let length = 0;
-    for (let i = 1; i < ann.points.length; i++) {
-      const prev = ann.points[i - 1]!;
-      const cur = ann.points[i]!;
-      length += Math.hypot(cur[0] - prev[0], cur[1] - prev[1]);
-    }
-    return formatDimFromPixels(length, dpi, drawingScale);
+    return formatDimFromPixels(annotationPixelPerimeter(ann), dpi, drawingScale);
   }
   return "";
+}
+
+/** Real-world perimeter of a bounded shape (bbox / polygon / circle). Empty for open
+ *  shapes — their length is already the value `formatAnnotationCalculatedSize` returns. */
+export function formatAnnotationPerimeter(
+  ann: CanonicalAnnotation,
+  dpi: number | undefined,
+  drawingScale: DrawingScaleInput | undefined,
+): string {
+  if (!isAreaAnnotation(ann)) return "";
+  if (getRealUnitsPerPixel(dpi, drawingScale) === null) return "";
+  return formatDimFromPixels(annotationPixelPerimeter(ann), dpi, drawingScale);
 }

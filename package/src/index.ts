@@ -3,4 +3,6 @@ export type { CanonicalAnnotation, LabelMap, SymbolSize, SymbolSizeUnit, ToolTyp
 export type { ThemeVars } from "./theme";
 export { DEFAULT_THEME } from "./theme";
 export { geo } from "./utils/geometry";
+export { measure } from "./utils/measure";
+export type { MeasureOptions, RealMeasurement } from "./utils/measure";
 export type { DrawingScale, ScaleSideInput } from "./utils/drawingScale";

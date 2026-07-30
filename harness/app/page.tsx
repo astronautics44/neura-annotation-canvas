@@ -81,6 +81,7 @@ function getAnnotations(engine: Engine): CanonicalAnnotation[] {
 type LabelVisibility = "always" | "hover" | "selected" | "hover+selected";
 type FinishAction = "enter" | "right-click" | "double-click";
 type EdgeSplitMode = "midpoint" | "anyPoint";
+type PolygonMinVertexAction = "block" | "polyline" | "line";
 
 export default function Page() {
   const [engine, setEngine] = useState<Engine>("A");
@@ -91,6 +92,8 @@ export default function Page() {
   const [countFinishAction, setCountFinishAction] = useState<FinishAction>("right-click");
   const [enableActiveLabel, setEnableActiveLabel] = useState(true);
   const [edgeSplitMode, setEdgeSplitMode] = useState<EdgeSplitMode>("midpoint");
+  const [polygonMinVertexAction, setPolygonMinVertexAction] =
+    useState<PolygonMinVertexAction>("block");
   const activePreset = SCALE_PRESETS[scalePreset]!;
   const annotations = useMemo(() => getAnnotations(engine), [engine]);
 
@@ -256,6 +259,22 @@ export default function Page() {
           </label>
 
           <label
+            title="What deleting the 3rd vertex of a polygon does"
+            style={{ fontSize: 11, color: lightTheme.textSecondary, display: "flex", alignItems: "center", gap: 4 }}
+          >
+            Polygon floor:
+            <select
+              value={polygonMinVertexAction}
+              onChange={(e) => setPolygonMinVertexAction(e.target.value as PolygonMinVertexAction)}
+              style={selectStyle(lightTheme)}
+            >
+              <option value="block">block</option>
+              <option value="polyline">polyline</option>
+              <option value="line">line</option>
+            </select>
+          </label>
+
+          <label
             title="Off = classic behaviour: the label popover opens for every shape"
             style={{ fontSize: 11, color: lightTheme.textSecondary, display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}
           >
@@ -309,6 +328,7 @@ export default function Page() {
           polylineFinishAction={polylineFinishAction}
           countFinishAction={countFinishAction}
           edgeSplitMode={edgeSplitMode}
+          polygonMinVertexAction={polygonMinVertexAction}
           enableActiveLabel={enableActiveLabel}
           onActiveLabelChange={(id) => console.log("[annotation-engine] onActiveLabelChange", id)}
           dpi={activePreset.dpi > 0 ? activePreset.dpi : undefined}

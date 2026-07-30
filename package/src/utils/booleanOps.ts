@@ -90,6 +90,16 @@ function ringArea(ring: Ring): number {
   return Math.abs(area / 2);
 }
 
+function ringPerimeter(ring: Ring): number {
+  let length = 0;
+  for (let i = 0; i < ring.length - 1; i++) {
+    const a = ring[i]!;
+    const b = ring[i + 1]!;
+    length += Math.hypot(b[0] - a[0], b[1] - a[1]);
+  }
+  return length;
+}
+
 function polygonToRings(poly: Polygon): [number, number][][] {
   return poly.map((ring) => {
     const closed = closeRing(ring);
@@ -280,4 +290,27 @@ export function annotationPixelArea(ann: CanonicalAnnotation): number {
   let area = ringArea(closeRing(rings[0]!));
   for (let i = 1; i < rings.length; i++) area -= ringArea(closeRing(rings[i]!));
   return Math.max(area, 0);
+}
+
+/**
+ * Boundary length of an annotation in image pixels.
+ * - bbox / polygon / circle: closed perimeter. Compound shapes sum every ring,
+ *   so a hollow (donut) shape returns outer + hole boundary.
+ * - line / polyline: total open path length.
+ * - point: 0.
+ */
+export function annotationPixelPerimeter(ann: CanonicalAnnotation): number {
+  const meta = ann.meta as ShapeMeta | undefined;
+  // Plain circle (no compound rings): exact 2·π·r instead of the segment approximation
+  if (ann.type === "circle" && !meta?.rings?.length) {
+    const { w } = bboxToKonva(ann.points);
+    return Math.PI * w;
+  }
+  if (ann.type === "line" || ann.type === "polyline") {
+    return ringPerimeter(ann.points as Ring);
+  }
+  const rings = getAnnotationRings(ann);
+  let length = 0;
+  for (const ring of rings) length += ringPerimeter(closeRing(ring as Ring));
+  return length;
 }
