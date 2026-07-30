@@ -1,6 +1,6 @@
 {
   "name": "@astronautics44/neura-annotation-canvas",
-  "version": "0.5.0",
+  "version": "1.0.0",
   "private": false,
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -12,6 +12,10 @@
     "./geo": {
       "types": "./dist/utils/geometry.d.ts",
       "import": "./dist/utils/geometry.js"
+    },
+    "./measure": {
+      "types": "./dist/utils/measure.d.ts",
+      "import": "./dist/utils/measure.js"
     }
   },
   "files": [

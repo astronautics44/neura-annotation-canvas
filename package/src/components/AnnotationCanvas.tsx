@@ -114,6 +114,17 @@ interface Props {
    * - "anyPoint" — hover anywhere along a segment to insert the vertex at that point
    */
   edgeSplitMode?: "midpoint" | "anyPoint";
+  /**
+   * What happens when the user deletes a vertex from a polygon that has only
+   * three left — the point at which a polygon can no longer stay a polygon.
+   * - "block"    — the deletion is refused, polygons always keep ≥3 vertices (default)
+   * - "polyline" — the polygon degrades to a 2-point open polyline
+   * - "line"     — the polygon degrades to a line
+   *
+   * Compound polygons (hollow / boolean-op results, which carry `meta.rings`)
+   * always block — there is no meaningful open-path form for them.
+   */
+  polygonMinVertexAction?: "block" | "polyline" | "line";
 
   // --- scale ---
   /** Scanner resolution of the image in dots per inch. Required for real-world dimension display. */
@@ -213,6 +224,7 @@ export function AnnotationCanvas({
   polylineFinishAction = "enter",
   countFinishAction = "enter",
   edgeSplitMode = "midpoint",
+  polygonMinVertexAction = "block",
   dpi,
   drawingScale: drawingScaleProp,
   onDrawingScaleChange,
@@ -669,18 +681,34 @@ export function AnnotationCanvas({
   /**
    * Removes vertex `vertIdx` from a poly-based shape; the two edges that met at
    * the deleted vertex collapse into a single new edge between its neighbours.
-   * No-op if it would drop below the shape's minimum vertex count
-   * (polygon ≥ 3, polyline/line ≥ 2).
+   *
+   * Open shapes (polyline/line) always stop at 2 points. A 3-vertex polygon is
+   * the configurable case: `polygonMinVertexAction` decides whether the deletion
+   * is refused or the shape degrades to an open line/polyline.
    */
   const deleteVertex = useCallback((ann: CanonicalAnnotation, vertIdx: number) => {
     if (readonly) return;
-    const min = ann.type === "polygon" ? 3 : 2;
-    if (ann.points.length <= min) return;
+
     const next = ann.points.filter((_, i) => i !== vertIdx) as [number, number][];
-    const updated: CanonicalAnnotation = { ...ann, points: next };
+    let type = ann.type;
+
+    if (ann.type === "polygon") {
+      if (next.length < 3) {
+        // Compound polygons have no open-path equivalent — the remaining rings
+        // would be orphaned, so they hold the floor regardless of the setting.
+        const isCompound = Boolean((ann.meta as ShapeMeta | undefined)?.rings?.length);
+        if (polygonMinVertexAction === "block" || isCompound) return;
+        if (next.length < 2) return;
+        type = polygonMinVertexAction;
+      }
+    } else if (next.length < 2) {
+      return;
+    }
+
+    const updated: CanonicalAnnotation = { ...ann, type, points: next };
     annotationsRef.current = annotationsRef.current.map((a) => (a.id === ann.id ? updated : a));
     dispatchAndNotify({ type: "UPDATE", payload: updated });
-  }, [readonly, dispatchAndNotify]);
+  }, [readonly, polygonMinVertexAction, dispatchAndNotify]);
 
   /**
    * Deletes a corner of a bbox. A rectangle is defined by two corners, so it

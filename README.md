@@ -35,6 +35,7 @@ annotation-engine/
 │       │   ├── LabelPanel.tsx
 │       │   └── LabelPopover.tsx
 │       ├── utils/geometry.ts          geo export (coord math helpers)
+│       ├── utils/measure.ts           measure export (area / perimeter readout)
 │       └── theme.ts                   ThemeVars + defaults
 │
 └── harness/          ← Next.js dev app, not shipped
@@ -185,6 +186,9 @@ interface AnnotationCanvasProps {
 
   // Edge splitting on selected line / polyline / polygon
   edgeSplitMode?: "midpoint" | "anyPoint"; // default: "midpoint"
+
+  // Deleting the 3rd vertex of a polygon: refuse, or degrade to an open shape
+  polygonMinVertexAction?: "block" | "polyline" | "line"; // default: "block"
 
   // Pinned annotation class — new shapes commit with this label, no popover
   enableActiveLabel?: boolean;                          // master switch; default: true
@@ -374,6 +378,52 @@ geo.yoloBoxToPoints(
 // COCO flat segmentation [x1,y1,x2,y2,...] → [[x,y],[x,y],...]
 geo.cocoSegToPoints(seg: number[]): [number, number][]
 ```
+
+---
+
+## `measure` — area & perimeter readout
+
+Pure geometry functions for reading the size of any annotation. No canvas, no React, no engine schema — just math on `CanonicalAnnotation`. Nothing is computed unless you call it, so consumers that don't need measurements pay nothing.
+
+```typescript
+import { measure } from "@astronautics44/neura-annotation-canvas";
+
+// One argument → image pixels
+measure.area(ann); // 9600   (px²)
+measure.perimeter(ann); // 400    (px)
+
+// Second argument → real-world units (same dpi/drawingScale you pass the canvas)
+measure.perimeter(ann, { dpi, drawingScale });
+// → { value: 6.2, unit: "m", text: "6.20m" }   or null when scale is unset
+
+measure.isAreaShape(ann); // true for bbox | polygon | circle
+```
+
+| Type       | `area`               | `perimeter`                    |
+| ---------- | -------------------- | ------------------------------ |
+| `bbox`     | w × h                | closed perimeter               |
+| `circle`   | exact π·r²           | exact 2π·r                     |
+| `polygon`  | shoelace, minus holes| every ring summed (outer + holes) |
+| `line`     | 0                    | segment length                 |
+| `polyline` | 0                    | total path length              |
+| `point`    | 0                    | 0                              |
+
+Compound shapes produced by the boolean ops (merge / subtract / intersect / hollow) are handled correctly: a donut's `area` subtracts the hole, and its `perimeter` counts both the outer and the inner boundary.
+
+`RealMeasurement.value` is the raw number after unit promotion (mm → m at 1000, in → ft at 12); `unit` is bare (`"m"`); `text` is display-ready and includes `²` for areas.
+
+Typical takeoff use:
+
+```typescript
+const takeoff = annotations.filter(measure.isAreaShape).map((ann) => ({
+  id: ann.id,
+  label: ann.label,
+  area: measure.area(ann, { dpi, drawingScale })?.value ?? null,
+  perimeter: measure.perimeter(ann, { dpi, drawingScale })?.value ?? null,
+}));
+```
+
+The right-hand label panel also displays the perimeter as a `P` line under the measured size, whenever `dpi` and `drawingScale` are configured.
 
 ---
 
@@ -775,6 +825,37 @@ Controls where a new vertex is inserted when splitting an edge of a selected `li
 
 ---
 
+### `polygonMinVertexAction` prop
+
+```typescript
+polygonMinVertexAction?: "block" | "polyline" | "line"; // default: "block"
+```
+
+Deleting vertices (alt-click or right-click a vertex handle) walks a polygon down toward its floor of three. This prop decides what the *third* deletion does.
+
+| Value          | Behavior                                                                        |
+| -------------- | ------------------------------------------------------------------------------- |
+| `"block"`      | Deletion is refused; a polygon never drops below 3 vertices (default, matches pre-existing behavior) |
+| `"polyline"`   | The polygon degrades to an open 2-point `polyline`                              |
+| `"line"`       | The polygon degrades to a `line`                                                |
+
+```tsx
+// Default — polygons are locked at 3 vertices
+<AnnotationCanvas polygonMinVertexAction="block" ... />
+
+// Let a triangle collapse into an open path
+<AnnotationCanvas polygonMinVertexAction="polyline" ... />
+```
+
+Notes:
+
+- The degraded annotation keeps its `id`, `label`, `confidence`, `source`, and `meta`. Only `type` and `points` change, so consumers see a normal `UPDATE` through `onChange`, not a delete-plus-create.
+- Since the shape is no longer closed, `measure.area()` returns `0` for it afterwards and `measure.perimeter()` becomes its open path length. It also drops out of the boolean shape ops and the label panel's area readout.
+- **Compound polygons always block**, whatever the setting. Hollow shapes and boolean-op results carry `meta.rings`; there is no open-path form that preserves them, so their holes would be orphaned.
+- Open shapes are unaffected — `line` and `polyline` still stop at 2 points.
+
+---
+
 ### Label selector popover
 
 Appears after completing a draw gesture (or when relabeling). Supports:
@@ -866,11 +947,13 @@ Shows all annotations grouped by label. Features:
 - Click an annotation row to select it on canvas (auto-pans if out of view)
 - **Selecting an annotation on canvas auto-scrolls the panel to that row and highlights it** — collapsed groups are automatically expanded
 - Click a group header to collapse/expand
+- **Collapse all** — the chevron button in the panel header folds every class group at once (including the unknown-label bucket), and expands them all again when everything is already collapsed. Useful on drawings with many classes: collapse everything, then open just the class you're reviewing. Selecting an annotation on canvas still auto-expands its group.
 - **Class visibility filter** — each group header has an eye toggle to hide/show that class's annotations on the canvas; a master eye toggle in the panel header hides or shows all classes at once. Hide everything, then click one class to review it in isolation. Hidden classes dim in the list and their shapes become non-selectable (excluded from clicks, marquee drag-select, and select-all). Visibility is a view-only state and never mutates annotation data.
 - Hover a row to reveal relabel (✎) and delete (✕) actions
 - Each annotation shows an `H` badge (human-created) or `AI` badge (engine output)
 - When `meta.symbolSize` is set, the row shows the manual dimension (e.g. `diameter - 12mm`)
 - When `dpi` and `drawingScale` are set, each row also shows the computed real-world size below the annotation ID (e.g. `4.25m` for a line, `0.90m×2.10m · 1.89m²` for a bbox, `14.2m²` for a polygon, `⌀0.60m · 0.28m²` for a circle)
+- Bounded shapes (bbox, polygon, circle) also show their perimeter on a `P` line beneath the size (e.g. `P 6.20m`). Read the same numbers programmatically with [`measure`](#measure--area--perimeter-readout).
 
 ---
 
