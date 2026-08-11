@@ -17,7 +17,7 @@ export function AnnotationChip({ x, y, scale, text, theme }: AnnotationChipProps
   const chipHeight = 18 / scale;
 
   return (
-    <Group x={x} y={y}>
+    <Group x={x} y={y} listening={false}>
       <Rect
         x={0}
         y={0}
@@ -35,6 +35,7 @@ export function AnnotationChip({ x, y, scale, text, theme }: AnnotationChipProps
         fontSize={11 / scale}
         fill={theme.textPrimary}
         fontFamily="system-ui"
+        listening={false}
       />
     </Group>
   );

@@ -76,14 +76,21 @@ export function AnnotationCard({
   let cardX = anchorX;
   let cardY = anchorY - cardHeight - 8 / scale;
   if (imageBounds) {
-    cardX = Math.max(4 / scale, Math.min(cardX, imageBounds.width - cardWidth - 4 / scale));
-    if (cardY < 4 / scale) {
-      cardY = anchorY + 8 / scale;
+    const anchorInsideBounds =
+      anchorX >= 0 &&
+      anchorX <= imageBounds.width &&
+      anchorY >= 0 &&
+      anchorY <= imageBounds.height;
+    if (anchorInsideBounds) {
+      cardX = Math.max(4 / scale, Math.min(cardX, imageBounds.width - cardWidth - 4 / scale));
+      if (cardY < 4 / scale) {
+        cardY = anchorY + 8 / scale;
+      }
     }
   }
 
   return (
-    <Group x={cardX} y={cardY}>
+    <Group x={cardX} y={cardY} listening={false}>
       <Rect
         width={cardWidth}
         height={cardHeight}
@@ -91,6 +98,7 @@ export function AnnotationCard({
         stroke={hexToRgba(theme.border, 0.55)}
         strokeWidth={1 / scale}
         cornerRadius={10 / scale}
+        listening={false}
       />
       <Text
         x={padding}
@@ -100,11 +108,13 @@ export function AnnotationCard({
         fontStyle="bold"
         fill={theme.textPrimary}
         fontFamily="system-ui"
+        listening={false}
       />
       <Line
         points={[padding, headerHeight, cardWidth - padding, headerHeight]}
         stroke={hexToRgba(theme.border, 0.55)}
         strokeWidth={1 / scale}
+        listening={false}
       />
       {rows.map((row, i) => (
         <Text
