@@ -75,6 +75,7 @@ export function LabelPopover({
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const valueRef = useRef<HTMLInputElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
 
   const [attributeChoice, setAttributeChoice] = useState(
     initialSymbolSize?.attribute ?? DEFAULT_SYMBOL_SIZE_ATTRIBUTES[0]!,
@@ -121,6 +122,16 @@ export function LabelPopover({
   useEffect(() => {
     setCursor(0);
   }, [query]);
+
+  useEffect(() => {
+    const handlePointerDown = (e: PointerEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        onCancel();
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [onCancel]);
 
   const pickLabel = (canonicalClassId: string) => {
     const lm = labels.find((l) => l.canonicalClassId === canonicalClassId);
@@ -214,6 +225,7 @@ export function LabelPopover({
 
   return (
     <div
+      ref={wrapperRef}
       style={{
         position: positionStrategy,
         left: Math.min(position.x, window.innerWidth - popoverWidth - 10),
@@ -352,7 +364,7 @@ export function LabelPopover({
               <select
                 value={
                   attributeChoice === "__custom__" ||
-                  !attributeOptions.includes(attributeChoice)
+                    !attributeOptions.includes(attributeChoice)
                     ? "__custom__"
                     : attributeChoice
                 }
@@ -368,13 +380,13 @@ export function LabelPopover({
               </select>
               {(attributeChoice === "__custom__" ||
                 !attributeOptions.includes(attributeChoice)) && (
-                <input
-                  value={customAttribute}
-                  onChange={(e) => setCustomAttribute(e.target.value)}
-                  placeholder="e.g. spacing"
-                  style={{ ...inputStyle, marginTop: 4 }}
-                />
-              )}
+                  <input
+                    value={customAttribute}
+                    onChange={(e) => setCustomAttribute(e.target.value)}
+                    placeholder="e.g. spacing"
+                    style={{ ...inputStyle, marginTop: 4 }}
+                  />
+                )}
             </div>
 
             <div>
