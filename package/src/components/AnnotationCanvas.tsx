@@ -80,6 +80,13 @@ interface Props {
   /** Show fullscreen toggle button in the status bar. Default: true */
   showFullscreen?: boolean;
   /**
+   * Show the annotations list panel beside the canvas. Set false to give the
+   * full container width to the canvas — nothing is reserved where the panel
+   * would have been. Selection, relabelling and deletion all stay available on
+   * the canvas itself. Default: true
+   */
+  showAnnotationsPanel?: boolean;
+  /**
    * When label chips are visible on annotations.
    * - "always"         — always shown when zoom ≥ 30% (default)
    * - "hover"          — only while the cursor is over the annotation
@@ -196,6 +203,9 @@ const PENDING_SHAPE_PHASES = [
 
 type PendingShapePhase = (typeof PENDING_SHAPE_PHASES)[number];
 
+/** Stable empty set, so the "no class filter" case never changes identity. */
+const EMPTY_HIDDEN_CLASSES: Set<string> = new Set();
+
 function isPendingShapePhase(phase: DrawState["phase"]): phase is PendingShapePhase {
   return (PENDING_SHAPE_PHASES as readonly string[]).includes(phase);
 }
@@ -219,6 +229,7 @@ export function AnnotationCanvas({
   showUndoRedo = true,
   enableSelectAll = true,
   showFullscreen = true,
+  showAnnotationsPanel = true,
   labelVisibility = "always",
   labelDisplayMode = "chip",
   polylineFinishAction = "enter",
@@ -281,7 +292,15 @@ export function AnnotationCanvas({
   /** Drag-box multi-select while the select tool is active. */
   const [marquee, setMarquee] = useState<{ start: [number, number]; cur: [number, number]; additive: boolean } | null>(null);
   /** Label class ids whose annotations are hidden from the canvas (list filter). */
-  const [hiddenClasses, setHiddenClasses] = useState<Set<string>>(new Set());
+  const [hiddenClassesState, setHiddenClasses] = useState<Set<string>>(new Set());
+  /**
+   * The eye toggle in the annotations list is the only way to hide a class, and
+   * the only way to bring it back. With the list hidden there is no control, so
+   * the filter is not applied — otherwise a consumer flipping
+   * `showAnnotationsPanel` to false mid-session would strand hidden shapes with
+   * no way to restore them.
+   */
+  const hiddenClasses = showAnnotationsPanel ? hiddenClassesState : EMPTY_HIDDEN_CLASSES;
 
   /**
    * Pinned annotation class. While set, a finished shape is committed straight
@@ -1805,6 +1824,7 @@ export function AnnotationCanvas({
             );
           })()}
         </div>
+        {showAnnotationsPanel && (
         <LabelPanel
           annotations={annotations}
           labels={labels}
@@ -1848,6 +1868,7 @@ export function AnnotationCanvas({
           }}
           onRelabel={(id, label, symbolSize) => applyRelabel(id, label, symbolSize)}
         />
+        )}
       </div>
 
       {/* Status bar */}
