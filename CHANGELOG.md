@@ -2,6 +2,37 @@
 
 All notable changes to `@astronautics44/neura-annotation-canvas`.
 
+## 1.2.0
+
+### Changed
+
+- **Selecting an annotation from the list raises it to the top of the z-order.**
+  Clicking a row in the annotations panel now moves that annotation to the end
+  of the array, so it draws above everything it overlaps. Picking a shape out of
+  a dense stack from the list no longer leaves it buried under its neighbours.
+
+  New internal reducer action `BRING_TO_TOP`. Canvas clicks are unaffected —
+  whatever you click there is already the topmost hit.
+
+### Payload note
+
+Array order **is** part of the `onChange` / `onSave` payload — it is the z-order.
+So a list-row click now emits an `onChange` with the same annotations in a
+different order. No annotation, field or id changes. Consumers that key off ids
+see nothing new; consumers that depend on array position should read the order
+from the payload rather than assuming it is stable across selections.
+
+The reorder deliberately does **not** take an undo snapshot — selecting a shape
+should not consume an undo step.
+
+### Fixed
+
+- The reorder is suppressed under `readonly`. Array order is part of the payload,
+  so raising a shape is a mutation, and `readonly` means no mutations — a
+  view-only embed no longer emits `onChange` when the user clicks a list row.
+
+---
+
 ## 1.1.0
 
 ### Added

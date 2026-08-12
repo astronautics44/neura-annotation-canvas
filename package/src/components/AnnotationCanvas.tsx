@@ -1844,6 +1844,10 @@ export function AnnotationCanvas({
             } else {
               setSelectedIds([id]);
             }
+            // Raising the clicked annotation reorders the array, and array order
+            // is part of the onSave/onChange payload — so it is a mutation, and
+            // readonly means no mutations.
+            if (!readonly) dispatch({ type: "BRING_TO_TOP", id });
             const ann = annotations.find((a) => a.id === id);
             if (!ann) return;
             const c = ann.type === "point" ? ann.points[0]! : centroid(ann.points);
