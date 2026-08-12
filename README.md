@@ -159,7 +159,7 @@ interface AnnotationCanvasProps {
   labels: LabelMap[]; // full label registry; use symbolSize per label for manual size form
 
   // Data
-  annotations?: CanonicalAnnotation[]; // pre-adapted engine output, loaded on mount
+  annotations?: CanonicalAnnotation[]; // pre-adapted engine output; seeds state, see note below
   onSave: (annotations: CanonicalAnnotation[]) => void;
   onChange?: (annotations: CanonicalAnnotation[]) => void; // fires on every mutation
   onLabelsChange?: (labels: LabelMap[]) => void; // fires when user creates a new label
@@ -175,6 +175,7 @@ interface AnnotationCanvasProps {
   showUndoRedo?: boolean;     // undo / redo buttons in the toolbar
   enableSelectAll?: boolean;  // Ctrl/Cmd+A selects all annotations
   showFullscreen?: boolean;   // fullscreen toggle button in the status bar
+  showAnnotationsPanel?: boolean; // annotations list panel on the right
 
   // Label chip visibility
   labelVisibility?: "always" | "hover" | "selected" | "hover+selected"; // default: "always"
@@ -209,6 +210,36 @@ interface AnnotationCanvasProps {
   theme?: Partial<ThemeVars>; // override any design token; see Theming section
 }
 ```
+
+### `annotations` is initial state, not a controlled prop
+
+`AnnotationCanvas` owns its annotation state. The `annotations` prop **seeds** that
+state — it is read when the component mounts, and re-read whenever the array's
+**identity** changes (`!==` against the array the canvas is currently holding).
+Re-seeding wipes the user's in-progress edits and the undo/redo history.
+
+This matters because of how the guard works. The canvas skips the reload when the
+incoming array is the exact array it last emitted through `onChange`, which makes
+the common "feed onChange back in" pattern safe. It cannot skip a **new array
+built during render**:
+
+```tsx
+// ✗ Infinite loop. A new array identity every render → re-seed → onChange →
+//   parent setState → render → new array identity → …
+//   In practice this hits React's "Maximum update depth exceeded" after a few
+//   thousand renders.
+<AnnotationCanvas annotations={raw.map(adaptEngineOutput)} ... />
+```
+
+```tsx
+// ✓ Build the array once, and remount when the stored set genuinely changes.
+const annotations = useMemo(() => adaptEngineOutput(raw), [raw]);
+
+<AnnotationCanvas key={sheetId} annotations={annotations} ... />;
+```
+
+Also note `onChange` fires once on mount with the seeded array, before the user
+has touched anything. If your parent stores that payload, expect that first call.
 
 ### Layout model
 
@@ -602,14 +633,16 @@ When `enableSelectAll` is true (default), `Ctrl/Cmd+A` selects all annotations s
 
 ## Feature toggles
 
-All three toggles default to `true`. Set any to `false` to hide the feature from that client.
+All of these default to `true`. Set any to `false` to hide the feature from that client.
 
 ```tsx
 // Full feature set (default)
 <AnnotationCanvas
-  showZoomControls={true}   // zoom in/out/fit buttons in status bar
-  showUndoRedo={true}       // undo/redo buttons in toolbar (Ctrl+Z still works)
-  enableSelectAll={true}    // Ctrl+A selects all annotations
+  showZoomControls={true}     // zoom in/out/fit buttons in status bar
+  showUndoRedo={true}         // undo/redo buttons in toolbar (Ctrl+Z still works)
+  enableSelectAll={true}      // Ctrl+A selects all annotations
+  showFullscreen={true}       // fullscreen toggle in status bar
+  showAnnotationsPanel={true} // annotations list on the right
   ...
 />
 
@@ -620,6 +653,13 @@ All three toggles default to `true`. Set any to `false` to hide the feature from
   showUndoRedo={false}
   enableSelectAll={false}
   tools={["select"]}
+  ...
+/>
+
+// Canvas-only — you render your own list beside it
+<AnnotationCanvas
+  showAnnotationsPanel={false}
+  tools={["select", "bbox"]}
   ...
 />
 
@@ -954,6 +994,41 @@ Shows all annotations grouped by label. Features:
 - When `meta.symbolSize` is set, the row shows the manual dimension (e.g. `diameter - 12mm`)
 - When `dpi` and `drawingScale` are set, each row also shows the computed real-world size below the annotation ID (e.g. `4.25m` for a line, `0.90m×2.10m · 1.89m²` for a bbox, `14.2m²` for a polygon, `⌀0.60m · 0.28m²` for a circle)
 - Bounded shapes (bbox, polygon, circle) also show their perimeter on a `P` line beneath the size (e.g. `P 6.20m`). Read the same numbers programmatically with [`measure`](#measure--area--perimeter-readout).
+
+### Hiding the panel — `showAnnotationsPanel`
+
+```tsx
+<AnnotationCanvas showAnnotationsPanel={false} ... />
+```
+
+Defaults to `true`. When `false` the panel is not rendered at all and the canvas
+takes the full width of its container — no reserved gutter, no empty column. Use
+it when the list has nothing to add: a single label class, or your own richer
+list rendered beside the canvas.
+
+What stays available with the panel hidden:
+
+| Action                | Without the panel                                                             |
+| --------------------- | ----------------------------------------------------------------------------- |
+| Select a shape        | Click it on the canvas; shift/⌘-click to add; drag a marquee for many          |
+| Select all            | `Ctrl/Cmd+A`                                                                  |
+| Delete                | `Delete` / `Backspace` on the selection                                       |
+| Relabel               | `R` with exactly one shape selected — opens the same label popover            |
+| Class visibility      | Not available — the eye toggles live in the panel. Any classes hidden while the panel was visible are shown again, so nothing can be stranded off-screen with no control to bring it back. |
+
+`onChange` and `onSave` payloads are **identical** either way. The panel is a view
+over the same reducer state that the canvas draws from; it holds no annotation
+data of its own, and hiding it changes no annotation, no field, and no ordering.
+The only state it owns is view-local (group collapse, class visibility, row
+hover), none of which reaches the canonical output.
+
+> **Accessibility:** hiding the panel takes away no keyboard access, because the
+> panel never provided any. Its rows are click-only (`div` with `onClick`, no
+> `tabIndex`), and the per-row relabel/delete buttons only mount on mouse hover,
+> so they are not tab-reachable either. Reaching a *specific* shape by keyboard
+> is not supported today with or without the panel — the keyboard paths to a
+> selection are `Ctrl/Cmd+A`, then `Delete` or `R` to act on it. Shape-level
+> keyboard navigation is a separate gap, tracked independently of this prop.
 
 ---
 

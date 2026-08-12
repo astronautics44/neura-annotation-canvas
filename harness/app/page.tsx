@@ -91,6 +91,7 @@ export default function Page() {
   const [polylineFinishAction, setPolylineFinishAction] = useState<FinishAction>("right-click");
   const [countFinishAction, setCountFinishAction] = useState<FinishAction>("right-click");
   const [enableActiveLabel, setEnableActiveLabel] = useState(true);
+  const [showAnnotationsPanel, setShowAnnotationsPanel] = useState(true);
   const [edgeSplitMode, setEdgeSplitMode] = useState<EdgeSplitMode>("midpoint");
   const [polygonMinVertexAction, setPolygonMinVertexAction] =
     useState<PolygonMinVertexAction>("block");
@@ -286,6 +287,19 @@ export default function Page() {
             />
             Pinned class
           </label>
+
+          <label
+            title="Off = the annotations list is hidden and the canvas takes the full width"
+            style={{ fontSize: 11, color: lightTheme.textSecondary, display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}
+          >
+            <input
+              type="checkbox"
+              checked={showAnnotationsPanel}
+              onChange={(e) => setShowAnnotationsPanel(e.target.checked)}
+              style={{ cursor: "pointer", margin: 0 }}
+            />
+            Annotations list
+          </label>
         </div>
 
         {/* Feature hints */}
@@ -330,6 +344,7 @@ export default function Page() {
           edgeSplitMode={edgeSplitMode}
           polygonMinVertexAction={polygonMinVertexAction}
           enableActiveLabel={enableActiveLabel}
+          showAnnotationsPanel={showAnnotationsPanel}
           onActiveLabelChange={(id) => console.log("[annotation-engine] onActiveLabelChange", id)}
           dpi={activePreset.dpi > 0 ? activePreset.dpi : undefined}
           drawingScale={activePreset.dpi > 0 ? activePreset.scale : undefined}

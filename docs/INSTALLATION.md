@@ -721,6 +721,7 @@ These props all default to `true`. Set any to `false` to hide UI chrome for a mi
   showUndoRedo={true}       // undo/redo buttons in the toolbar
   enableSelectAll={true}    // Ctrl/Cmd+A selects all annotations
   showFullscreen={true}     // fullscreen toggle in the status bar
+  showAnnotationsPanel={true} // annotations list panel on the right
   ...
 />
 ```
@@ -738,6 +739,21 @@ Example — view-only embed with minimal UI:
   ...
 />
 ```
+
+Example — canvas only, because your app renders its own list beside it:
+
+```tsx
+<AnnotationCanvas
+  showAnnotationsPanel={false}
+  tools={["select", "bbox"]}
+  ...
+/>
+```
+
+With `showAnnotationsPanel={false}` the canvas takes the full width of its
+container — nothing is reserved where the panel would have been. Selection stays
+on the canvas (click, shift-click, marquee drag), and `onChange` / `onSave`
+payloads are unchanged.
 
 ## 13. GitHub Actions Install Example
 
