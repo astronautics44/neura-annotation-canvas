@@ -1844,6 +1844,7 @@ export function AnnotationCanvas({
             } else {
               setSelectedIds([id]);
             }
+            dispatch({ type: "BRING_TO_TOP", id });
             const ann = annotations.find((a) => a.id === id);
             if (!ann) return;
             const c = ann.type === "point" ? ann.points[0]! : centroid(ann.points);
