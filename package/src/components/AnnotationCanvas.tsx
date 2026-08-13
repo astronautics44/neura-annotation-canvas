@@ -64,6 +64,35 @@ interface Props {
   onChange?: (annotations: CanonicalAnnotation[]) => void;
   onLabelsChange?: (labels: LabelMap[]) => void;
 
+  // --- selection ---
+  /**
+   * Ids of the annotations that should be selected. Controlled — pass
+   * `onSelectionChange` to track what the user does on the canvas. Omit
+   * entirely to let the component own selection exactly as it always has.
+   *
+   * Selection is not a mutation, so this works under `readonly` too.
+   */
+  selectedIds?: string[];
+  /**
+   * Fires whenever the selection changes on the canvas: a click on a shape, a
+   * marquee drag, select-all, Escape, or a click on empty space.
+   *
+   * Never fires for a change that came in through `selectedIds`, and never
+   * fires with a set equal to the current one, so a controlled consumer that
+   * echoes this straight back into `selectedIds` does not loop.
+   */
+  onSelectionChange?: (ids: string[]) => void;
+  /**
+   * Bring the selection on screen when it is off screen, by panning to centre
+   * it. Applies however the selection changed, including through `selectedIds`,
+   * which is what makes "click a row in my own list, show me its shape" work.
+   *
+   * A shape that is already visible is left where it is: panning under somebody
+   * who can already see the thing they clicked is disorienting. Zoom is never
+   * touched. Default: false, so nothing changes for existing consumers.
+   */
+  revealSelection?: boolean;
+
   // --- tools ---
   tools?: ToolType[];
 
@@ -210,6 +239,17 @@ function isPendingShapePhase(phase: DrawState["phase"]): phase is PendingShapePh
   return (PENDING_SHAPE_PHASES as readonly string[]).includes(phase);
 }
 
+/**
+ * Whether two selections are the same set, so an unchanged one is never
+ * announced.
+ *
+ * This is what stops a controlled consumer that echoes `onSelectionChange`
+ * straight back into `selectedIds` from looping forever.
+ */
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, index) => id === b[index]);
+}
+
 /** The pinned class, plus the symbol size captured when it was pinned. */
 interface StickyLabel {
   id: string;
@@ -223,6 +263,9 @@ export function AnnotationCanvas({
   onSave,
   onChange,
   onLabelsChange,
+  selectedIds: selectedIdsProp,
+  onSelectionChange,
+  revealSelection = false,
   tools,
   readonly = false,
   showZoomControls = true,
@@ -277,7 +320,39 @@ export function AnnotationCanvas({
   const [tool, setTool] = useState<ToolType>("select");
   const [panMode, setPanMode] = useState(false);
   const [draw, setDraw] = useState<DrawState>({ phase: "idle" });
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  /**
+   * Selection, owned here or by the consumer.
+   *
+   * Controlled the way `activeLabel` already is: pass `selectedIds` and the
+   * prop is the truth, omit it and the internal state is. The wrapper below is
+   * what lets the fifteen existing `setSelectedIds` call sites stay exactly as
+   * they were, including the ones that pass an updater function.
+   */
+  const [selectedIdsState, setSelectedIdsState] = useState<string[]>([]);
+  const selectionIsControlled = selectedIdsProp !== undefined;
+  const selectedIds = selectionIsControlled ? selectedIdsProp : selectedIdsState;
+
+  /* Read by the setter below so it can resolve an updater without depending on
+     the current value, which is what keeps its identity stable across renders.
+     The big keydown effect lists it in its dependencies. */
+  const selectedIdsRef = useRef(selectedIds);
+  selectedIdsRef.current = selectedIds;
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  onSelectionChangeRef.current = onSelectionChange;
+
+  const setSelectedIds = useCallback(
+    (next: string[] | ((prev: string[]) => string[])) => {
+      const previous = selectedIdsRef.current;
+      const value = typeof next === "function" ? next(previous) : next;
+      if (sameIds(value, previous)) return;
+      /* Under control the prop is the truth and the consumer echoes the change
+         back; writing internal state as well would give two sources for one
+         fact and a flicker on every rejected selection. */
+      if (!selectionIsControlled) setSelectedIdsState(value);
+      onSelectionChangeRef.current?.(value);
+    },
+    [selectionIsControlled],
+  );
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
   const [scale, setScale] = useState(1);
@@ -435,6 +510,62 @@ export function AnnotationCanvas({
   }, [img, containerSize]);
 
   useEffect(() => { if (img) fitToScreen(); }, [img, fitToScreen]);
+
+  /**
+   * Bring annotations on screen by panning to their centre, and only when at
+   * least one of them is off screen.
+   *
+   * Leaving a visible shape where it is matters: panning under somebody who can
+   * already see the thing they just clicked is disorienting, and over a list of
+   * thirty rows it would mean the picture jumping on every row click.
+   *
+   * Zoom is never touched. A shape too small to make out is a real problem on a
+   * tall strip, and the answer to it is the user's own zoom control rather than
+   * a component deciding for them how close is close enough.
+   */
+  const revealAnnotations = useCallback((ids: readonly string[]) => {
+    const centres = ids
+      .map((id) => annotationsRef.current.find((a) => a.id === id))
+      .filter((ann): ann is CanonicalAnnotation => ann !== undefined)
+      .map((ann) => (ann.type === "point" ? ann.points[0]! : centroid(ann.points)));
+    if (centres.length === 0) return;
+
+    const offScreen = centres.some(([x, y]) => {
+      const sx = x * scale + stagePos.x;
+      const sy = y * scale + stagePos.y;
+      return sx < 0 || sx > containerSize.w || sy < 0 || sy > containerSize.h;
+    });
+    if (!offScreen) return;
+
+    const cx = centres.reduce((sum, c) => sum + c[0], 0) / centres.length;
+    const cy = centres.reduce((sum, c) => sum + c[1], 0) / centres.length;
+    setStagePos({ x: containerSize.w / 2 - cx * scale, y: containerSize.h / 2 - cy * scale });
+  }, [scale, stagePos, containerSize]);
+
+  /*
+   * Reveal on a change of selection, never on a change of viewport.
+   *
+   * `revealAnnotations` closes over `stagePos`, so listing it as a dependency
+   * would re-run this on every pan, and yank the user back the moment they
+   * scrolled away from a shape that was still selected. The ref keeps the effect
+   * keyed to the selection alone.
+   *
+   * The frame's delay is for the one ordering that would otherwise be wrong: a
+   * consumer mounting with a selection already set races the fit-to-screen
+   * effect above, which lands its own `stagePos` in the following commit.
+   */
+  const revealRef = useRef(revealAnnotations);
+  revealRef.current = revealAnnotations;
+  const lastRevealed = useRef<readonly string[]>([]);
+
+  useEffect(() => {
+    if (!revealSelection || !img) return;
+    if (sameIds(selectedIds, lastRevealed.current)) return;
+    lastRevealed.current = selectedIds;
+    if (selectedIds.length === 0) return;
+    const frame = requestAnimationFrame(() => revealRef.current(selectedIds));
+    return () => cancelAnimationFrame(frame);
+  }, [revealSelection, img, selectedIds]);
 
   const handleUndo = useCallback(() => {
     if (past.current.length === 0) return;
@@ -1038,8 +1169,20 @@ export function AnnotationCanvas({
     setStagePos({ x: ptr.x - mouseX * newScale, y: ptr.y - mouseY * newScale });
   }, [scale, stagePos]);
 
+  /*
+   * `readonly` is deliberately not a guard here, and this is a fix rather than a
+   * new feature.
+   *
+   * Selecting a shape mutates nothing, and every other way of selecting one
+   * already worked under `readonly`: a marquee drag selects, clicking empty
+   * space clears, Ctrl+A selects all, and a click on a row of the annotations
+   * panel selects. Only a direct click on the shape itself was refused, so a
+   * view-only embed had a selection a user could reach four ways and not the
+   * obvious one. Dragging and deleting keep their own `readonly` guards, in
+   * `handleAnnotationMouseDown` and `onDeleteSelected`, because those do mutate.
+   */
   const handleAnnotationClick = useCallback((id: string, e: KonvaEventObject<MouseEvent>) => {
-    if (tool !== "select" || readonly || panMode) return;
+    if (tool !== "select" || panMode) return;
     e.cancelBubble = true;
     if (e.evt.shiftKey || e.evt.metaKey || e.evt.ctrlKey) {
       setSelectedIds((prev) =>
@@ -1051,7 +1194,7 @@ export function AnnotationCanvas({
     }
     // Plain click on an already-selected annotation keeps the current multi-selection
     // so the user can drag the group without collapsing it.
-  }, [tool, readonly, panMode, selectedIds]);
+  }, [tool, panMode, selectedIds, setSelectedIds]);
 
   const handleAnnotationMouseDown = useCallback((id: string, e: KonvaEventObject<MouseEvent>) => {
     if (tool !== "select" || readonly || panMode) return;
@@ -1848,14 +1991,9 @@ export function AnnotationCanvas({
             // is part of the onSave/onChange payload — so it is a mutation, and
             // readonly means no mutations.
             if (!readonly) dispatch({ type: "BRING_TO_TOP", id });
-            const ann = annotations.find((a) => a.id === id);
-            if (!ann) return;
-            const c = ann.type === "point" ? ann.points[0]! : centroid(ann.points);
-            const sx = c[0] * scale + stagePos.x;
-            const sy = c[1] * scale + stagePos.y;
-            if (sx < 0 || sx > containerSize.w || sy < 0 || sy > containerSize.h) {
-              setStagePos({ x: containerSize.w / 2 - c[0] * scale, y: containerSize.h / 2 - c[1] * scale });
-            }
+            // The same centre-if-off-screen the `revealSelection` prop uses, so
+            // the built-in list and a consumer's own list behave identically.
+            revealAnnotations([id]);
           }}
           onDelete={(id) => {
             dispatchAndNotify({ type: "DELETE", id });
