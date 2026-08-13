@@ -2,6 +2,58 @@
 
 All notable changes to `@astronautics44/neura-annotation-canvas`.
 
+## 1.3.0
+
+### Added
+
+- **`selectedIds?: string[]`** and **`onSelectionChange?: (ids: string[]) => void`**
+  — selection becomes controllable, in the same controlled-with-callback shape
+  `activeLabel` / `onActiveLabelChange` already has. Omit `selectedIds` entirely
+  and the component owns selection exactly as it always has, so this is additive
+  and changes nothing for existing consumers.
+
+  It exists because a consumer that renders its own list beside the canvas
+  (`showAnnotationsPanel: false`, added in 1.1.0) had no way to link the two: a
+  click on their row could not mark the shape, and a click on the shape could not
+  scroll their row into view. Faking it by remounting with a different label
+  colour was the only option, and a remount resets zoom and pan — which on a
+  legend strip is exactly the state the user had just set up.
+
+  ```tsx
+  const [selected, setSelected] = useState<string[]>([]);
+  <AnnotationCanvas selectedIds={selected} onSelectionChange={setSelected} ... />
+  ```
+
+  `onSelectionChange` never fires for a change that arrived through
+  `selectedIds`, and never fires with a set equal to the current one, so echoing
+  it straight back into the prop does not loop.
+
+- **`revealSelection?: boolean`** — pans to centre the selection when it is off
+  screen, however the selection changed, including through `selectedIds`. That
+  is what makes "click a row in my own list, show me its shape" work rather than
+  marking a shape the user cannot see.
+
+  A shape already on screen is left where it is, because panning under somebody
+  who can already see what they clicked is disorienting and over a thirty row
+  list it would mean the picture jumping on every click. Zoom is never touched.
+  Defaults to `false`.
+
+  The built-in annotations panel now routes its own centre-on-select through the
+  same helper, so the internal list and a consumer's list behave identically.
+
+### Fixed
+
+- **A click on a shape now selects it under `readonly`.** Every other way of
+  selecting already worked there — marquee drag, click on empty space to clear,
+  Ctrl+A, and a click on a row of the annotations panel — so a view-only embed
+  had a selection reachable four ways and not the obvious one. Selecting mutates
+  nothing; dragging and deleting keep their own `readonly` guards.
+
+  Consumers rendering `readonly` will now see the selection outline appear on a
+  shape click where previously nothing happened.
+
+---
+
 ## 1.2.0
 
 ### Changed

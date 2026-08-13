@@ -168,7 +168,13 @@ interface AnnotationCanvasProps {
   tools?: ToolType[]; // subset to expose; default: all ["select","bbox","polygon","line","point","circle"]
 
   // Behavior
-  readonly?: boolean; // disables all editing; view mode only
+  readonly?: boolean; // disables all editing; view mode only. Selection still works.
+
+  // Selection — controlled, the same shape as activeLabel / onActiveLabelChange.
+  // Omit selectedIds entirely and the component owns selection as it always has.
+  selectedIds?: string[];                       // ids that should be selected
+  onSelectionChange?: (ids: string[]) => void;  // canvas clicks, marquee, select-all, Escape
+  revealSelection?: boolean;                    // pan to centre the selection when off screen; default: false
 
   // Feature toggles — all default to true
   showZoomControls?: boolean; // zoom-in / zoom-out / fit buttons in the status bar
