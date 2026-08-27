@@ -15,6 +15,11 @@ interface Props {
   onBringForward: () => void;
   onSendBackward: () => void;
   isHollow: boolean;
+  /**
+   * Start a comment on the selection. Provided only when commenting is on —
+   * the visible path to the comment box, so it is not hotkey-only.
+   */
+  onComment?: (() => void) | undefined;
 }
 
 function OpButton({
@@ -64,6 +69,7 @@ export function ShapeOpsBar({
   onBringForward,
   onSendBackward,
   isHollow,
+  onComment,
 }: Props) {
   if (count === 0) return null;
 
@@ -90,7 +96,19 @@ export function ShapeOpsBar({
         {count} selected
       </span>
 
-      {areaCount >= 2 && (
+      {onComment && (
+        <>
+          <OpButton
+            label="Comment"
+            title="Comment on the selection (M)"
+            disabled={false}
+            onClick={onComment}
+          />
+          {!readonly && <span style={{ width: 1, height: 16, background: "var(--ae-border)" }} />}
+        </>
+      )}
+
+      {!readonly && areaCount >= 2 && (
         <>
           <OpButton label="Merge" title="Union overlapping shapes (Ctrl+Shift+U)" disabled={readonly} onClick={onMerge} />
           <OpButton label="Subtract" title="Remove other shapes from the first selected (Ctrl+Shift+-)" disabled={readonly} onClick={onSubtract} />
@@ -99,7 +117,7 @@ export function ShapeOpsBar({
         </>
       )}
 
-      {count === 1 && (
+      {!readonly && count === 1 && (
         <OpButton
           label={isHollow ? "Fill on" : "Hollow"}
           title="Toggle fill — stroke-only outline (Ctrl+Shift+O)"
@@ -108,7 +126,7 @@ export function ShapeOpsBar({
         />
       )}
 
-      {canLayer && (
+      {!readonly && canLayer && (
         <>
           <div style={{ width: 1, height: 18, background: "var(--ae-border)" }} />
           <OpButton label="↑ Layer" title="Bring forward" disabled={readonly} onClick={onBringForward} />

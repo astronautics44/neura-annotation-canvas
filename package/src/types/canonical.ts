@@ -1,4 +1,7 @@
-export type ToolType = "select" | "bbox" | "polygon" | "polyline" | "line" | "point" | "circle" | "count";
+export type ToolType =
+  | "select" | "bbox" | "polygon" | "polyline" | "line" | "point" | "circle" | "count"
+  /** Comment mode. Not an annotation type — comments never enter the annotation payload. */
+  | "comment";
 
 export type AnnotationType = "bbox" | "polygon" | "polyline" | "line" | "point" | "circle";
 

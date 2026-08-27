@@ -1,12 +1,16 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useState, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type {
   CanonicalAnnotation,
+  CommentAnchor,
+  CommentDraft,
+  CommentTarget,
   ThemeVars,
   DrawingScale,
 } from "@astronautics44/neura-annotation-canvas";
+import { CommentSidebar, type Thread } from "./CommentSidebar";
 import { labelRegistry } from "../fixtures/label-registry";
 import { adaptEngineA } from "../lib/adapters";
 import { adaptEngineB } from "../lib/adapters";
@@ -97,6 +101,59 @@ export default function Page() {
     useState<PolygonMinVertexAction>("block");
   const activePreset = SCALE_PRESETS[scalePreset]!;
   const annotations = useMemo(() => getAnnotations(engine), [engine]);
+
+  // --- comments -------------------------------------------------------------
+  // All of this is consumer-side. The canvas only ever sees `comments` (id +
+  // position + count) and hands back events.
+  const [enableComments, setEnableComments] = useState(true);
+  const [threads, setThreads] = useState<Thread[]>([]);
+
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [focusedIds, setFocusedIds] = useState<string[]>([]);
+  const [liveAnnotations, setLiveAnnotations] = useState<CanonicalAnnotation[]>([]);
+
+  /** Tombstoned threads keep their conversation but leave the canvas. */
+  const liveThreads = useMemo(() => threads.filter((t) => !t.deleted), [threads]);
+
+  /** Mark a thread deleted or bring it back. Never drops the messages. */
+  const setDeleted = useCallback((id: string, deleted: boolean) => {
+    setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, deleted } : t)));
+    if (deleted) setSelectedThreadId((cur) => (cur === id ? null : cur));
+  }, []);
+
+  /** What the canvas renders: one marker per thread. No bodies, no authors. */
+  const comments = useMemo<CommentAnchor[]>(
+    () => liveThreads.map((t) => ({
+      id: t.id,
+      target: t.target,
+      count: t.messages.length,
+      resolved: t.resolved,
+    })),
+    [liveThreads],
+  );
+
+  /**
+   * The canvas already collected the text — this is just "store it".
+   * Pushing a new `comments` array is what retires the provisional marker.
+   */
+  const handleCommentCreate = useCallback((draft: CommentDraft) => {
+    setThreads((prev) => [...prev, {
+      id: draft.id,
+      target: draft.target,
+      resolved: false,
+      deleted: false,
+      messages: [{ author: "You", text: draft.text, at: new Date().toLocaleTimeString() }],
+    }]);
+    setSelectedThreadId(draft.id);
+  }, []);
+
+  const describeTarget = useCallback((t: CommentTarget) => {
+    if (t.kind === "point") return `pin @ ${Math.round(t.at[0])}, ${Math.round(t.at[1])}`;
+    const ann = liveAnnotations.find((a) => a.id === t.annotationId);
+    if (!ann) return `shape ${t.annotationId.slice(0, 6)} (gone)`;
+    const lm = labels.find((l) => l.canonicalClassId === ann.label);
+    return `${lm?.displayName ?? ann.label} · ${ann.id.slice(0, 6)}`;
+  }, [liveAnnotations, labels]);
 
   return (
     <div
@@ -300,6 +357,19 @@ export default function Page() {
             />
             Annotations list
           </label>
+
+          <label
+            title="Off = no comment tool, no markers, no M binding — exactly as before the feature existed"
+            style={{ fontSize: 11, color: lightTheme.textSecondary, display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}
+          >
+            <input
+              type="checkbox"
+              checked={enableComments}
+              onChange={(e) => setEnableComments(e.target.checked)}
+              style={{ cursor: "pointer", margin: 0 }}
+            />
+            Comments
+          </label>
         </div>
 
         {/* Feature hints */}
@@ -309,7 +379,8 @@ export default function Page() {
             <kbd style={kbdStyle}>C</kbd> circle &nbsp;
             <kbd style={kbdStyle}>P</kbd> polygon &nbsp;
             <kbd style={kbdStyle}>Y</kbd> polyline &nbsp;
-            <kbd style={kbdStyle}>T</kbd> count
+            <kbd style={kbdStyle}>T</kbd> count &nbsp;
+            <kbd style={kbdStyle}>M</kbd> comment
           </span>
           <span style={{ fontSize: 11, color: lightTheme.textMuted }}>
             <kbd style={kbdStyle}>1</kbd>–<kbd style={kbdStyle}>9</kbd> pin class &nbsp;
@@ -327,8 +398,9 @@ export default function Page() {
         </div>
       </div>
 
-      {/* Canvas */}
-      <div style={{ flex: 1, overflow: "hidden" }}>
+      {/* Canvas + the consumer's own comment panel */}
+      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+        <div style={{ flex: 1, overflow: "hidden" }}>
         <AnnotationCanvas
           key={engine}
           image={FLOOR_PLAN_URL}
@@ -353,13 +425,48 @@ export default function Page() {
             console.log("[annotation-engine] onSave", saved);
           }}
           onChange={(all) => {
+            // Display-only copy, so the panel can name a shape a thread hangs off.
+            // Never fed back into `annotations` — that would re-seed and loop.
+            setLiveAnnotations(all);
             console.log("[annotation-engine] onChange count:", all.length);
           }}
           onLabelsChange={(updated) => {
             setLabels(updated);
             console.log("[annotation-engine] onLabelsChange", updated);
           }}
+          enableComments={enableComments}
+          comments={comments}
+          selectedCommentId={selectedThreadId}
+          onCommentCreate={handleCommentCreate}
+          onCommentSelect={(id, screenPos) => {
+            setSelectedThreadId(id);
+            console.log("[annotation-engine] onCommentSelect", id, screenPos);
+          }}
+          onCommentDelete={(id) => setDeleted(id, true)}
+          onCommentUndo={(op) => {
+            // The canvas ordered the step; we own the data, so we apply it.
+            setDeleted(op.id, op.action === "remove");
+            console.log("[annotation-engine] onCommentUndo", op);
+          }}
+          onSelectionChange={(ids) => setFocusedIds(ids)}
         />
+        </div>
+        {enableComments && (
+          <CommentSidebar
+            threads={liveThreads}
+            selectedThreadId={selectedThreadId}
+            focusedAnnotationIds={focusedIds}
+            describeTarget={describeTarget}
+            onReply={(threadId, text) => setThreads((prev) => prev.map((t) =>
+              t.id === threadId
+                ? { ...t, messages: [...t.messages, { author: "You", text, at: new Date().toLocaleTimeString() }] }
+                : t))}
+            onToggleResolved={(threadId) => setThreads((prev) => prev.map((t) =>
+              t.id === threadId ? { ...t, resolved: !t.resolved } : t))}
+            onDelete={(threadId) => setDeleted(threadId, true)}
+            onSelect={setSelectedThreadId}
+          />
+        )}
       </div>
     </div>
   );
