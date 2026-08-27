@@ -29,7 +29,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           # Full history, so the tag can be proved to be on main.
           fetch-depth: 0
@@ -37,8 +37,8 @@ jobs:
       - name: Refuse a tag that is not on main
         if: github.event_name == 'push'
         run: |
-          git fetch --no-tags --depth=0 origin main
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
             echo "::error::Tag $GITHUB_REF_NAME points at $GITHUB_SHA, which is not on main. Nothing published."
             exit 1
           fi
@@ -70,7 +70,7 @@ jobs:
           echo "Publishing $VERSION"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
           registry-url: https://npm.pkg.github.com
