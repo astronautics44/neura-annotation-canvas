@@ -13,6 +13,7 @@ import type { Stage as StageType } from "konva/lib/Stage";
 import { Stage, Layer, Image as KonvaImage, Rect, Line, Circle, Ellipse, Group, Text, Shape } from "react-konva";
 import useImage from "use-image";
 import type { CanonicalAnnotation, LabelMap, SymbolSize, ToolType } from "../types/canonical";
+import type { CommentAnchor, CommentDraft, CommentTarget, CommentUndoOp } from "../types/comments";
 import type { ThemeVars } from "../theme";
 import { resolveTheme, themeToCssVars } from "../theme";
 import { newId } from "../utils/ids";
@@ -27,6 +28,8 @@ import { ShapeOpsBar } from "./ShapeOpsBar";
 import { ActiveLabelBar } from "./ActiveLabelBar";
 import { AnnotationChip } from "./AnnotationChip";
 import { AnnotationCard } from "./AnnotationCard";
+import { CommentMarkers } from "./CommentMarkers";
+import { CommentComposer } from "./CommentComposer";
 import {
   getAnnotationRings,
   hollowAnnotations,
@@ -92,6 +95,70 @@ interface Props {
    * touched. Default: false, so nothing changes for existing consumers.
    */
   revealSelection?: boolean;
+
+  // --- comments ---
+  /**
+   * Master switch for commenting. Default: **false** — with it off there is no
+   * comment tool, no `M` binding, and nothing rendered, so an existing consumer
+   * that never heard of this feature behaves exactly as it did before.
+   *
+   * Commenting is not an annotation mutation, so it stays available under
+   * `readonly` — a view-only review is the main place someone leaves a note.
+   */
+  enableComments?: boolean;
+  /**
+   * Threads to draw cues for. Display-only and fully controlled: the canvas
+   * never mutates this array and never reads comment content, because it has
+   * none — an anchor is an id, a position and a count.
+   *
+   * Comments never enter the `onChange` / `onSave` payload.
+   */
+  comments?: CommentAnchor[];
+  /**
+   * The user asked for a new thread — by clicking empty canvas in comment mode
+   * (free-form), clicking a shape in comment mode, or pressing `M` with one
+   * shape selected (attached). Nothing exists yet: open your composer, persist,
+   * then push a `CommentAnchor` into `comments`.
+   *
+   * The canvas collects the text itself, in a small box at the marker — so
+   * `draft.text` is what the user wrote. Store it and push a `CommentAnchor`
+   * into `comments`. Reading, replying and resolving stay yours.
+   *
+   * Return a promise — the shape `onPendingShapeCommit` uses — and the
+   * provisional marker clears when it settles. Return nothing and it clears
+   * when `comments` changes identity, on Escape, or on a tool change.
+   */
+  onCommentCreate?: (draft: CommentDraft) => void | Promise<unknown>;
+  /**
+   * A marker was clicked, or the selection was cleared. `screenPos` is the
+   * marker's position in container-relative px, for anchoring a thread popover.
+   */
+  onCommentSelect?: (id: string | null, screenPos?: { x: number; y: number }) => void;
+  /**
+   * Delete the thread behind a marker. Wiring this is what makes the hover `x`
+   * and the `Delete` key appear on markers — leave it off and markers are
+   * read-only cues.
+   */
+  onCommentDelete?: (id: string) => void;
+  /**
+   * Undo or redo a comment operation the user performed on the canvas.
+   *
+   * Comment operations share the annotation undo stack, so Ctrl+Z always undoes
+   * the last thing the user did, whichever kind it was. The canvas cannot carry
+   * one out itself — it never held the thread's content — so it hands you an
+   * intent and you apply it: `restore` puts a thread back, `remove` takes it
+   * away. The two are exact inverses, so redo needs nothing extra.
+   *
+   * This requires you to **soft-delete**: keep a tombstone of a removed thread
+   * so `restore` can bring back the conversation, not just the marker.
+   *
+   * Leave it unwired and comment steps still occupy the stack, deliberately: the
+   * keystroke is consumed rather than falling through and reverting an unrelated
+   * annotation edit.
+   */
+  onCommentUndo?: (op: CommentUndoOp) => void;
+  /** Which thread is highlighted. Controlled; omit to let the canvas own it. */
+  selectedCommentId?: string | null;
 
   // --- tools ---
   tools?: ToolType[];
@@ -232,6 +299,19 @@ const PENDING_SHAPE_PHASES = [
 
 type PendingShapePhase = (typeof PENDING_SHAPE_PHASES)[number];
 
+/**
+ * One entry in the undo history.
+ *
+ * Annotation edits are stored as a snapshot of the array *before* the change.
+ * Comment operations cannot be — the canvas has no comment data to snapshot —
+ * so they are stored as a pair of inverse intents handed back to the consumer.
+ * Both kinds share one stack, which is what keeps Ctrl+Z in the order the user
+ * actually did things.
+ */
+type HistoryStep =
+  | { kind: "annotations"; snapshot: CanonicalAnnotation[] }
+  | { kind: "comment"; back: CommentUndoOp; forward: CommentUndoOp };
+
 /** Stable empty set, so the "no class filter" case never changes identity. */
 const EMPTY_HIDDEN_CLASSES: Set<string> = new Set();
 
@@ -266,6 +346,13 @@ export function AnnotationCanvas({
   selectedIds: selectedIdsProp,
   onSelectionChange,
   revealSelection = false,
+  enableComments = false,
+  comments,
+  onCommentCreate,
+  onCommentSelect,
+  onCommentDelete,
+  onCommentUndo,
+  selectedCommentId,
   tools,
   readonly = false,
   showZoomControls = true,
@@ -305,8 +392,8 @@ export function AnnotationCanvas({
   const [annotations, dispatch] = useReducer(annotationReducer, initialAnnotations ?? []);
 
   // Undo/redo history (refs — don't need to trigger renders)
-  const past = useRef<CanonicalAnnotation[][]>([]);
-  const future = useRef<CanonicalAnnotation[][]>([]);
+  const past = useRef<HistoryStep[]>([]);
+  const future = useRef<HistoryStep[]>([]);
   const annotationsRef = useRef(annotations);
   annotationsRef.current = annotations;
   // Tracks last click timestamps for double-click finish detection
@@ -356,6 +443,117 @@ export function AnnotationCanvas({
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
   const [scale, setScale] = useState(1);
+
+  // ---------------------------------------------------------------------------
+  // Comments
+  //
+  // The canvas holds no comment content — only which marker is highlighted,
+  // which is hovered, and where an unsaved draft sits. Everything else is the
+  // consumer's.
+  // ---------------------------------------------------------------------------
+
+  const [internalCommentId, setInternalCommentId] = useState<string | null>(null);
+  const [hoveredCommentId, setHoveredCommentId] = useState<string | null>(null);
+  const [draftComment, setDraftComment] = useState<[number, number] | null>(null);
+  /** Identifies the draft in flight, so a slow composer cannot retire a newer one. */
+  const draftTokenRef = useRef<string | null>(null);
+  /** The comment box that is open, if any. */
+  const [pendingComment, setPendingComment] = useState<
+    { target: CommentTarget; at: [number, number] } | null
+  >(null);
+
+  // handleUndo/handleRedo are stable callbacks, so the live handler is reached
+  // through a ref rather than by rebuilding them on every render.
+  const onCommentUndoRef = useRef(onCommentUndo);
+  onCommentUndoRef.current = onCommentUndo;
+
+  /** Record a comment operation in the same history as annotation edits. */
+  const pushCommentStep = useCallback((back: CommentUndoOp, forward: CommentUndoOp) => {
+    past.current = [...past.current, { kind: "comment", back, forward }];
+    future.current = [];
+    if (past.current.length > 100) past.current = past.current.slice(-100);
+    setCanUndo(true);
+    setCanRedo(false);
+  }, []);
+
+  /** Empty unless commenting is switched on, so the render path stays dead by default. */
+  const commentAnchors = useMemo(
+    () => (enableComments ? comments ?? [] : []),
+    [enableComments, comments],
+  );
+  const commentControlled = selectedCommentId !== undefined;
+  const activeCommentId = commentControlled ? selectedCommentId ?? null : internalCommentId;
+
+  const imageToScreen = useCallback(
+    (pt: [number, number]) => ({ x: pt[0] * scale + stagePos.x, y: pt[1] * scale + stagePos.y }),
+    [scale, stagePos],
+  );
+
+  const selectComment = useCallback((id: string | null, at: [number, number] | null) => {
+    if (!commentControlled) setInternalCommentId(id);
+    onCommentSelect?.(id, at ? imageToScreen(at) : undefined);
+  }, [commentControlled, onCommentSelect, imageToScreen]);
+
+  /** Open the comment box. Nothing is emitted until the user actually writes. */
+  const beginComment = useCallback((target: CommentTarget, at: [number, number]) => {
+    // Only a free-form pin gets a provisional marker; an attached one already
+    // has a shape to hang off, so there is nothing extra to show.
+    if (target.kind === "point") setDraftComment(at);
+    setPendingComment({ target, at });
+  }, []);
+
+  const cancelComment = useCallback(() => {
+    setPendingComment(null);
+    setDraftComment(null);
+  }, []);
+
+  const submitComment = useCallback((text: string) => {
+    if (!pendingComment) return;
+    const draft: CommentDraft = {
+      id: newId(),
+      target: pendingComment.target,
+      screenPos: imageToScreen(pendingComment.at),
+      text,
+    };
+    setPendingComment(null);
+    draftTokenRef.current = draft.id;
+    pushCommentStep(
+      { action: "remove", id: draft.id },
+      { action: "restore", id: draft.id },
+    );
+    const result = onCommentCreate?.(draft);
+    // A thenable result means the consumer will tell us when the thread has
+    // landed, and the provisional marker can retire.
+    if (result && typeof (result as Promise<unknown>).then === "function") {
+      void (result as Promise<unknown>).then(
+        () => { if (draftTokenRef.current === draft.id) setDraftComment(null); },
+        () => { if (draftTokenRef.current === draft.id) setDraftComment(null); },
+      );
+    }
+  }, [pendingComment, onCommentCreate, imageToScreen, pushCommentStep]);
+
+  const deleteComment = useCallback((id: string) => {
+    // Captured before the consumer drops it, so undo can redraw the marker even
+    // though only they can rebuild the conversation behind it.
+    const anchor = commentAnchors.find((a) => a.id === id);
+    pushCommentStep(
+      { action: "restore", id, ...(anchor ? { anchor } : {}) },
+      { action: "remove", id },
+    );
+    onCommentDelete?.(id);
+    if (!commentControlled && internalCommentId === id) setInternalCommentId(null);
+    setHoveredCommentId(null);
+  }, [onCommentDelete, commentControlled, internalCommentId, commentAnchors, pushCommentStep]);
+
+  // The draft marker's whole job is to cover the gap between the click and the
+  // consumer storing the thread, so a new `comments` array is what retires it.
+  const lastCommentsRef = useRef(comments);
+  useEffect(() => {
+    if (lastCommentsRef.current !== comments) {
+      lastCommentsRef.current = comments;
+      setDraftComment(null);
+    }
+  }, [comments]);
   const [cursorImg, setCursorImg] = useState<[number, number]>([0, 0]);
   const [spaceDown, setSpaceDown] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
@@ -459,7 +657,7 @@ export function AnnotationCanvas({
 
   // Snapshot current state before a mutating action (for undo)
   const snapshot = useCallback(() => {
-    past.current = [...past.current, [...annotationsRef.current]];
+    past.current = [...past.current, { kind: "annotations", snapshot: [...annotationsRef.current] }];
     future.current = [];
     if (past.current.length > 100) past.current = past.current.slice(-100);
     setCanUndo(true);
@@ -569,20 +767,39 @@ export function AnnotationCanvas({
 
   const handleUndo = useCallback(() => {
     if (past.current.length === 0) return;
-    future.current = [annotationsRef.current, ...future.current];
-    const prev = past.current[past.current.length - 1]!;
+    const step = past.current[past.current.length - 1]!;
     past.current = past.current.slice(0, -1);
-    dispatch({ type: "LOAD", payload: prev });
+
+    if (step.kind === "comment") {
+      // The step rides to the future unchanged — `back` undoes it, `forward`
+      // redoes it, so there is nothing to invert here.
+      future.current = [step, ...future.current];
+      // With no `onCommentUndo` wired this is a deliberate no-op: the keystroke
+      // is consumed rather than falling through and reverting an unrelated
+      // annotation edit the user was not thinking about.
+      onCommentUndoRef.current?.(step.back);
+    } else {
+      future.current = [{ kind: "annotations", snapshot: annotationsRef.current }, ...future.current];
+      dispatch({ type: "LOAD", payload: step.snapshot });
+    }
+
     setCanUndo(past.current.length > 0);
     setCanRedo(true);
   }, []);
 
   const handleRedo = useCallback(() => {
     if (future.current.length === 0) return;
-    past.current = [...past.current, annotationsRef.current];
-    const next = future.current[0]!;
+    const step = future.current[0]!;
     future.current = future.current.slice(1);
-    dispatch({ type: "LOAD", payload: next });
+
+    if (step.kind === "comment") {
+      past.current = [...past.current, step];
+      onCommentUndoRef.current?.(step.forward);
+    } else {
+      past.current = [...past.current, { kind: "annotations", snapshot: annotationsRef.current }];
+      dispatch({ type: "LOAD", payload: step.snapshot });
+    }
+
     setCanUndo(true);
     setCanRedo(future.current.length > 0);
   }, []);
@@ -739,8 +956,35 @@ export function AnnotationCanvas({
         return;
       }
 
+      if (enableComments && (e.key === "m" || e.key === "M") && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        // Without this the same keystroke lands in the comment box it just opened.
+        e.preventDefault();
+        // One shape selected in select mode: comment on it directly. Otherwise
+        // this is just the tool shortcut.
+        if (tool === "select" && selectedIds.length === 1 && draw.phase === "idle") {
+          const target = annotationsRef.current.find((a) => a.id === selectedIds[0]);
+          if (target) {
+            const b = getAnnotationBounds(target);
+            beginComment({ kind: "annotation", annotationId: target.id }, [b.x + b.w, b.y]);
+            return;
+          }
+        }
+        setPanMode(false); setTool("comment"); setDraw({ phase: "idle" });
+        return;
+      }
       if (e.key === "h" || e.key === "H") { setPanMode((p) => !p); setDraw({ phase: "idle" }); return; }
-      if (e.key === "Escape") { setMarquee(null); setPanMode(false); setTool("select"); setDraw({ phase: "idle" }); setRelabelId(null); return; }
+      if (e.key === "Escape" && pendingComment) {
+        // The comment box owns Escape while it is open — closing it should not
+        // also throw the user out of comment mode.
+        cancelComment();
+        return;
+      }
+      if (e.key === "Escape") {
+        setMarquee(null); setPanMode(false); setTool("select"); setDraw({ phase: "idle" }); setRelabelId(null);
+        setDraftComment(null);
+        if (enableComments && activeCommentId) selectComment(null, null);
+        return;
+      }
       if (e.key === "v" || e.key === "V") { setPanMode(false); setTool("select"); setDraw({ phase: "idle" }); return; }
       if (e.key === "b" || e.key === "B") { setPanMode(false); setTool("bbox"); setDraw({ phase: "idle" }); return; }
       if (e.key === "p" || e.key === "P") { setPanMode(false); setTool("polygon"); setDraw({ phase: "idle" }); return; }
@@ -759,6 +1003,11 @@ export function AnnotationCanvas({
         if (e.key === "_" || e.key === "-") { e.preventDefault(); handleSubtract(); return; }
       }
 
+      if ((e.key === "Delete" || e.key === "Backspace") && enableComments && activeCommentId && onCommentDelete) {
+        e.preventDefault();
+        deleteComment(activeCommentId);
+        return;
+      }
       if ((e.key === "Delete" || e.key === "Backspace") && selectedIds.length > 0 && !readonly) {
         if (selectedIds.length === 1) {
           dispatchAndNotify({ type: "DELETE", id: selectedIds[0]! });
@@ -798,7 +1047,7 @@ export function AnnotationCanvas({
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp); };
-  }, [draw, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelId, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction, hiddenClasses, labels, setActiveLabel, enableActiveLabel]);
+  }, [draw, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelId, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction, hiddenClasses, labels, setActiveLabel, enableActiveLabel, tool, enableComments, activeCommentId, beginComment, deleteComment, selectComment, onCommentDelete, pendingComment, cancelComment]);
 
   // ---------------------------------------------------------------------------
   // Stage event handlers
@@ -947,10 +1196,20 @@ export function AnnotationCanvas({
       setIsPanning(true);
       return;
     }
-    if (readonly) return;
-
     const isStageClick = e.target === e.target.getStage() || e.target.name() === "bg-image";
     const imgPos = getImagePos(e);
+
+    // Comment mode is deliberately above the readonly gate: leaving a note is
+    // not an edit to the drawing.
+    if (tool === "comment") {
+      // A click that landed on a shape is that shape's to handle — it becomes an
+      // attached thread, not a free pin.
+      if (!isStageClick) return;
+      beginComment({ kind: "point", at: imgPos }, imgPos);
+      return;
+    }
+
+    if (readonly) return;
 
     if (tool === "select") {
       if (isStageClick) {
@@ -1024,7 +1283,7 @@ export function AnnotationCanvas({
       }
       return;
     }
-  }, [shouldPan, readonly, tool, draw, getImagePos, scale, stagePos, polylineFinishAction, countFinishAction]);
+  }, [shouldPan, readonly, tool, draw, getImagePos, scale, stagePos, polylineFinishAction, countFinishAction, beginComment]);
 
   const handleStageMouseMove = useCallback((e: KonvaEventObject<MouseEvent>) => {
     const stage = stageRef.current;
@@ -1182,6 +1441,14 @@ export function AnnotationCanvas({
    * `handleAnnotationMouseDown` and `onDeleteSelected`, because those do mutate.
    */
   const handleAnnotationClick = useCallback((id: string, e: KonvaEventObject<MouseEvent>) => {
+    if (tool === "comment" && !panMode) {
+      e.cancelBubble = true;
+      const target = annotationsRef.current.find((a) => a.id === id);
+      if (!target) return;
+      const b = getAnnotationBounds(target);
+      beginComment({ kind: "annotation", annotationId: id }, [b.x + b.w, b.y]);
+      return;
+    }
     if (tool !== "select" || panMode) return;
     e.cancelBubble = true;
     if (e.evt.shiftKey || e.evt.metaKey || e.evt.ctrlKey) {
@@ -1194,7 +1461,7 @@ export function AnnotationCanvas({
     }
     // Plain click on an already-selected annotation keeps the current multi-selection
     // so the user can drag the group without collapsing it.
-  }, [tool, panMode, selectedIds, setSelectedIds]);
+  }, [tool, panMode, selectedIds, setSelectedIds, beginComment]);
 
   const handleAnnotationMouseDown = useCallback((id: string, e: KonvaEventObject<MouseEvent>) => {
     if (tool !== "select" || readonly || panMode) return;
@@ -1432,6 +1699,14 @@ export function AnnotationCanvas({
     stagePos.x > containerSize.w ||
     stagePos.y + img.height * scale < 0 ||
     stagePos.y > containerSize.h
+  );
+
+  // Covers every route out of comment mode — toolbar, hotkey, Escape.
+  useEffect(() => { setDraftComment(null); }, [tool]);
+
+  const visibleAnnotations = useMemo(
+    () => annotations.filter((a) => !hiddenClasses.has(a.label)),
+    [annotations, hiddenClasses],
   );
 
   const stageCursor = isPanning ? "grabbing"
@@ -1839,7 +2114,12 @@ export function AnnotationCanvas({
   // Layout
   // ---------------------------------------------------------------------------
 
-  const availableTools = tools ?? (["select", "bbox", "polygon", "polyline", "line", "point", "circle", "count"] as ToolType[]);
+  const baseTools = tools ?? (["select", "bbox", "polygon", "polyline", "line", "point", "circle", "count"] as ToolType[]);
+  // The comment tool follows `enableComments`, never the default tool list, so
+  // a consumer who omits `tools` does not silently grow a new button.
+  const availableTools = enableComments
+    ? (baseTools.includes("comment") ? baseTools : [...baseTools, "comment" as ToolType])
+    : baseTools.filter((t) => t !== "comment");
   const selectedAreaCount = selectedIds
     .map((id) => annotations.find((a) => a.id === id))
     .filter((a): a is CanonicalAnnotation => a != null && isAreaAnnotation(a)).length;
@@ -1874,7 +2154,7 @@ export function AnnotationCanvas({
               onClear={() => setActiveLabel(null)}
             />
           )}
-          {!readonly && (
+          {(!readonly || (enableComments && selectedIds.length > 0)) && (
             <ShapeOpsBar
               count={selectedIds.length}
               areaCount={selectedAreaCount}
@@ -1888,6 +2168,12 @@ export function AnnotationCanvas({
               onToggleFill={handleToggleFill}
               onBringForward={handleBringForward}
               onSendBackward={handleSendBackward}
+              onComment={enableComments ? () => {
+                const first = annotationsRef.current.find((a) => a.id === selectedIds[0]);
+                if (!first) return;
+                const b = getAnnotationBounds(first);
+                beginComment({ kind: "annotation", annotationId: first.id }, [b.x + b.w, b.y]);
+              } : undefined}
             />
           )}
           <Stage
@@ -1907,9 +2193,29 @@ export function AnnotationCanvas({
           >
             <Layer>
               {img && <KonvaImage image={img} x={0} y={0} width={img.width} height={img.height} name="bg-image" />}
-              {annotations.filter((a) => !hiddenClasses.has(a.label)).map(renderAnnotation)}
+              {visibleAnnotations.map(renderAnnotation)}
               {renderDraw()}
             </Layer>
+            {/* Cues live in their own layer so a marker over a dense stack of
+                shapes is always the thing you click. */}
+            {enableComments && (
+              <Layer>
+                <CommentMarkers
+                  anchors={commentAnchors}
+                  visibleAnnotations={visibleAnnotations}
+                  scale={scale}
+                  accent={resolved.danger}
+                  muted={resolved.textSecondary}
+                  selectedId={activeCommentId}
+                  hoveredId={hoveredCommentId}
+                  draftAt={draftComment}
+                  canDelete={!!onCommentDelete}
+                  onHover={setHoveredCommentId}
+                  onSelect={selectComment}
+                  onDelete={deleteComment}
+                />
+              </Layer>
+            )}
           </Stage>
           {imageOutOfView && (
             <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", zIndex: 10 }}>
@@ -1924,6 +2230,22 @@ export function AnnotationCanvas({
               </button>
             </div>
           )}
+          {pendingComment && (() => {
+            const screen = imageToScreen(pendingComment.at);
+            const ann = pendingComment.target.kind === "annotation"
+              ? annotations.find((a) => a.id === (pendingComment.target as { annotationId: string }).annotationId)
+              : undefined;
+            const lm = ann ? labels.find((l) => l.canonicalClassId === ann.label) : undefined;
+            return (
+              <CommentComposer
+                position={screen}
+                targetLabel={ann ? lm?.displayName ?? ann.label : "the drawing"}
+                {...(ann && lm ? { targetColor: lm.color } : {})}
+                onSubmit={submitComment}
+                onCancel={cancelComment}
+              />
+            );
+          })()}
           {pPos && !onPendingShapeCommit && !stickyCommit && (
             <LabelPopover
               labels={labels}

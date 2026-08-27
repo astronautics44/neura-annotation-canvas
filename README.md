@@ -986,6 +986,193 @@ const [pinned, setPinned] = useState<string | null>(null);
 
 ---
 
+## Comments
+
+*Added in 2.0.0.* Off by default — a 1.x consumer that does not opt in sees no
+change. Set `enableComments` and the canvas grows a comment tool, an in-canvas box
+for writing one, and two cues on the drawing.
+
+**The package never sees comment content.** It knows a thread exists, where it is
+pinned, and how many comments it holds — enough to draw a marker and tell you
+which thread was clicked. Bodies, authors, timestamps, replying, resolving and
+persistence are yours, in your own panel. This is the same boundary the adapter
+rule draws.
+
+### Props
+
+| Prop                | Type                                                    | Notes                                                                 |
+| ------------------- | ------------------------------------------------------- | --------------------------------------------------------------------- |
+| `enableComments`    | `boolean`                                                | Master switch. **Default `false`** — off, nothing renders at all.      |
+| `comments`          | `CommentAnchor[]`                                        | Display-only and controlled. The canvas never mutates it.             |
+| `onCommentCreate`   | `(draft: CommentDraft) => void \| Promise<unknown>`      | The user wrote a comment. `draft.text` is what they typed.            |
+| `onCommentSelect`   | `(id: string \| null, screenPos?: {x,y}) => void`        | A marker was clicked. `screenPos` anchors your thread popover.        |
+| `onCommentDelete`   | `(id: string) => void`                                   | Thread id, not message id. Wiring this makes deletion appear on markers. |
+| `onCommentUndo`     | `(op: CommentUndoOp) => void`                            | Apply an undo/redo step. Requires you to soft-delete.                 |
+| `selectedCommentId` | `string \| null`                                         | Controlled highlight; omit to let the canvas own it.                  |
+
+### Types
+
+```typescript
+type CommentTarget =
+  | { kind: "point"; at: [number, number] }        // free-form, image px
+  | { kind: "annotation"; annotationId: string };  // attached, moves with the shape
+
+interface CommentAnchor {
+  id: string;              // your thread id
+  target: CommentTarget;
+  count?: number;          // rendered inside the marker when > 1
+  resolved?: boolean;      // dimmed, still clickable
+  meta?: Record<string, unknown>;
+}
+
+interface CommentDraft {
+  id: string;              // provisional id — adopt it or use your own
+  target: CommentTarget;
+  text: string;            // what the user typed. Never empty.
+  screenPos: { x: number; y: number };
+}
+```
+
+### Three ways to start a thread
+
+| Route                                     | Result                          |
+| ----------------------------------------- | ------------------------------- |
+| Comment tool → click blank paper          | Free-form thread at that point  |
+| Comment tool → click a shape              | Thread attached to that shape   |
+| Select a shape → **Comment** on the ops bar | Thread attached to that shape |
+| Select a shape → press `M`                | Thread attached to that shape   |
+
+With the comment tool active, what is under the cursor decides which you get. The
+selection-bar button exists so attaching is not hotkey-only.
+
+### The two cues
+
+Both cues are the same speech-bubble glyph as the toolbar's comment tool, drawn in
+a loud red outline over an opaque fill so they stay legible over dense linework.
+Position is what tells them apart: a free-form thread rests its tail on the point
+it marks, an attached thread is centred on its shape's top-right corner.
+
+Both are drawn at a constant **screen** size, so they do not grow with zoom, and
+unlike label chips they are **never hidden at low zoom** — the marker is the only
+signal a thread exists, and zoomed out is when you are hunting for one.
+
+The colour comes from the `danger` theme token (resolved threads use
+`textSecondary`), so overriding `danger` rethemes the markers. No new theme key
+was added.
+
+### Wiring it up
+
+```tsx
+const [threads, setThreads] = useState<Thread[]>([]);
+const [openId, setOpenId] = useState<string | null>(null);
+
+// Markers: id + position + count. No bodies.
+const comments = useMemo(
+  () => threads.map((t) => ({
+    id: t.id, target: t.target, count: t.messages.length, resolved: t.resolved,
+  })),
+  [threads],
+);
+
+<AnnotationCanvas
+  enableComments
+  comments={comments}
+  selectedCommentId={openId}
+  onCommentCreate={(draft) => {
+    // The canvas already collected the text — this is just "store it".
+    setThreads((prev) => [...prev, {
+      id: draft.id, target: draft.target, resolved: false,
+      messages: [{ author: me, text: draft.text, at: Date.now() }],
+    }]);
+    setOpenId(draft.id);
+  }}
+  onCommentSelect={setOpenId}
+  onCommentDelete={(id) => setThreads((p) => p.filter((t) => t.id !== id))}
+  // Already yours since 1.3.0 — this is the "which shape is in focus" channel.
+  onSelectionChange={setFocusedIds}
+  ...
+/>
+```
+
+`harness/app/CommentSidebar.tsx` is a working reference panel — read it, copy the
+pattern, throw the styling away.
+
+### Loading the thread for the shape in focus
+
+There is no new prop for this. `onSelectionChange` already reports what is
+selected on the canvas; filter your threads by those annotation ids.
+
+### Deleting
+
+`onCommentDelete` receives a **thread** id, never a message id. One click on a
+marker's `x` removes the whole thread — twelve comments or one — so nobody has to
+clear a conversation out a message at a time. Per-message deletion, if you want
+it, is yours to build in your panel; the canvas has no concept of a message.
+
+Markers gain that hover `x` and answer the `Delete` key **only when
+`onCommentDelete` is wired**. Leave it off and they are read-only cues. Free-form
+pins are fixed once placed — to move one, delete it and place another.
+
+### Undo and redo
+
+Comment operations share the annotation undo stack, so `Ctrl+Z` walks back what
+the user did in the order they did it, across both kinds. The canvas cannot
+restore a thread on its own — it never held the content — so it hands you an
+intent and you apply it:
+
+```tsx
+onCommentUndo={(op) => {
+  // "restore" -> put the thread back.  "remove" -> take it away again.
+  setDeleted(op.id, op.action === "remove");
+}}
+```
+
+`op` is a `CommentUndoOp`: `{ action, id, anchor? }`. `anchor` is the marker as
+the canvas last knew it — enough to redraw the pin, never enough to rebuild the
+conversation.
+
+**This requires soft-delete.** Tombstone a removed thread instead of dropping it,
+so `restore` can bring the messages back:
+
+```tsx
+const setDeleted = (id: string, deleted: boolean) =>
+  setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, deleted } : t)));
+
+const comments = useMemo(
+  () => threads.filter((t) => !t.deleted).map(toAnchor),
+  [threads],
+);
+```
+
+Leaving `onCommentUndo` unwired is safe: comment steps still occupy the stack, so
+the keystroke is consumed and nothing happens, rather than silently reverting an
+unrelated annotation edit.
+
+**Only canvas-initiated operations enter this history** — the marker's `x`, the
+`Delete` key, and threads created through the comment box. A delete the user
+performs in your own panel is your action and the canvas cannot see it, so offer
+undo for that yourself.
+
+### The draft marker
+
+A provisional marker appears the moment the user clicks, before anything is
+stored. It retires when your `comments` array changes identity, when
+`onCommentCreate` returns a promise that settles, on Escape, or on a tool change.
+
+### `readonly`
+
+`readonly` means the drawing cannot be edited. Leaving a note is not an edit — and
+a view-only review is the main place someone leaves one — so the comment tool,
+the comment box and the selection bar's **Comment** button all stay live under
+`readonly`, while every mutating control stays hidden. Gate commenting with
+`enableComments` and the `tools` list, not with `readonly`.
+
+### What does not change
+
+Comments never enter `onChange` or `onSave`. The annotation payload is unaffected.
+
+---
+
 ## Label panel (right sidebar)
 
 Shows all annotations grouped by label. Features:
@@ -1297,6 +1484,7 @@ The package does not do this itself — SSR gating is the consumer's responsibil
 export { AnnotationCanvas };                              // the main component
 export type { CanonicalAnnotation, LabelMap, SymbolSize, SymbolSizeUnit, ToolType }; // canonical types
 export type { DrawingScale, ScaleSideInput };             // drawing scale types
+export type { CommentAnchor, CommentDraft, CommentTarget }; // comment anchor types
 export type { ThemeVars };                                // theme token interface
 export { DEFAULT_THEME };                                 // the default dark palette, useful as a base
 export { geo };                                           // coordinate math helpers for use in adapters
