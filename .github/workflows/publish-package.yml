@@ -1,9 +1,23 @@
 name: Publish Package
 
+# Publishing is driven by a version tag on main:
+#
+#   git tag v2.0.0 && git push origin v2.0.0
+#
+# The tag is the source of truth for the version — it is stamped into
+# package/package.json before the build, so there is no separate "bump the
+# version" commit to forget. A tag that does not point at a commit on main is
+# refused.
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, e.g. 2.0.0. Defaults to package/package.json."
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -16,6 +30,44 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Full history, so the tag can be proved to be on main.
+          fetch-depth: 0
+
+      - name: Refuse a tag that is not on main
+        if: github.event_name == 'push'
+        run: |
+          git fetch --no-tags --depth=0 origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag $GITHUB_REF_NAME points at $GITHUB_SHA, which is not on main. Nothing published."
+            exit 1
+          fi
+          echo "$GITHUB_REF_NAME is on main."
+
+      - name: Resolve the version to publish
+        id: resolve
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          elif [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="$(node -p "require('./package/package.json').version")"
+          fi
+
+          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::'$VERSION' is not a semver version."
+            exit 1
+          fi
+
+          IN_REPO="$(node -p "require('./package/package.json').version")"
+          if [ "$VERSION" != "$IN_REPO" ]; then
+            echo "::warning::Tag says $VERSION but package/package.json says $IN_REPO. Publishing $VERSION; consider committing the bump so the repo matches."
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing $VERSION"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -24,8 +76,19 @@ jobs:
           registry-url: https://npm.pkg.github.com
           scope: "@astronautics44"
 
+      # Before the version is stamped, so the lockfile still matches.
       - name: Install dependencies
         run: npm ci
+
+      - name: Stamp the version
+        run: |
+          node -e '
+            const fs = require("fs");
+            const path = "package/package.json";
+            const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
+            pkg.version = process.argv[1];
+            fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");
+          ' "${{ steps.resolve.outputs.version }}"
 
       - name: Build package
         run: npm run build --workspace=package
