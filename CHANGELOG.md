@@ -2,6 +2,42 @@
 
 All notable changes to `@astronautics44/neura-annotation-canvas`.
 
+## 2.0.3
+
+### Fixed
+
+- **Zoom, pan and pointer movement no longer render the component.** The
+  viewport was React state, so every wheel tick and every pan mousemove
+  re-rendered every shape on the sheet, and the cursor readout in the status bar
+  was state too, so every pointer movement over the canvas did the same whether
+  or not anything was being dragged. Each of those renders rebound five events
+  on every shape, because the handlers were closures written in the render.
+  Measured on a sheet carrying 451 marks at 2× device pixel ratio: 12.7 ms per
+  wheel event and 10 ms per mousemove before, 0.1 ms and 0.2 ms after, with
+  the frame itself costing about 5 ms. A Mac with a 120 Hz display and a
+  trackpad was the machine that showed it, because it delivers an input event
+  per frame and paints four times the pixels; a 60 Hz laptop at 1× was near
+  enough the budget to look fine.
+
+  Three changes, none of them visible:
+
+  - The viewport lives in a ref, is painted straight onto the stage once per
+    animation frame while a gesture runs, and is written into React state
+    100 ms after the last event. Anything that must hold at the instant of an
+    input reads the ref.
+  - Everything sized in screen pixels — count marks, handles, vertices, label
+    chips and cards, comment bubbles, the in-progress drawing overlay — is laid
+    out inside a `ScreenSpace` group counter-scaled by the stage scale, and
+    strokes use Konva's `strokeScaleEnabled = false`. Nothing divides by the
+    scale any more, so a shape's props do not change when the zoom does.
+  - Each annotation's event handlers are created once and dispatch through a
+    ref, so react-konva has nothing to rebind on a render.
+
+  The status bar's cursor readout is its own component fed by a small store.
+  The harness gained an **Engine Stress** fixture of 450 marks for measuring
+  this; the three engine fixtures carry a dozen shapes each and could not show
+  it.
+
 ## 2.0.2
 
 ### Reverted

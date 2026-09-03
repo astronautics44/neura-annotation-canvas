@@ -626,6 +626,15 @@ The theme values are injected as CSS custom properties on the root element (`--a
 
 Zoom range: 5% – 2000%. The status bar shows the current zoom and cursor position in image pixel coordinates.
 
+Zooming and panning do not render the component. The viewport is painted onto
+the stage once per animation frame while a gesture runs and written into React
+state 100 ms after the last event, so a trackpad can deliver an event per frame
+over a sheet carrying hundreds of marks and each frame still costs one layer
+draw. Anything sized in screen pixels (count marks, handles, chips, comment
+bubbles) sits in a counter-scaled group rather than dividing by the scale, and
+strokes are drawn with `strokeScaleEnabled` off. The status bar's zoom readout
+therefore trails a gesture by up to 100 ms; the cursor readout does not.
+
 ### Multi-select
 
 When `enableSelectAll` is true (default), `Ctrl/Cmd+A` selects all annotations simultaneously. With multiple annotations selected:

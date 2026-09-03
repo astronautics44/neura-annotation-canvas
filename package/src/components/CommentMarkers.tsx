@@ -6,6 +6,7 @@ import { Circle, Group, Line, Path, Text } from "react-konva";
 import type { CanonicalAnnotation } from "../types/canonical";
 import type { CommentAnchor } from "../types/comments";
 import { getAnnotationBounds } from "./canvasHelpers";
+import { ScreenSpace } from "./ScreenSpace";
 
 /**
  * The comment cue layer.
@@ -16,10 +17,11 @@ import { getAnnotationBounds } from "./canvasHelpers";
  * the two apart: a free-form thread sits with its tail on the point it marks, an
  * attached one is centred on its shape's top-right corner.
  *
- * Everything is sized in screen pixels (divided by `scale`) so a marker is the
- * same size at 5% and at 2000% zoom. Markers are never hidden at low zoom the
- * way label chips are: the marker is the only signal that a thread exists, and
- * zoomed-out is exactly when you are hunting for one.
+ * Everything is sized in screen pixels, inside a `ScreenSpace` group anchored
+ * on the image point the marker belongs to, so a marker is the same size at 5%
+ * and at 2000% zoom. Markers are never hidden at low zoom the way label chips
+ * are: the marker is the only signal that a thread exists, and zoomed-out is
+ * exactly when you are hunting for one.
  */
 
 /** Lucide `MessageCircle`, the same path the toolbar button draws. 24x24 box. */
@@ -28,18 +30,24 @@ const BUBBLE_PATH =
 
 /** Rendered size of the glyph, in screen px. */
 const SIZE = 24;
+/** Screen px per path unit. */
+const K = SIZE / 24;
 /** Path-space coordinates of the tail tip and of the bubble's optical centre. */
 const TAIL = { x: 3, y: 21 };
 const CENTER = { x: 12.2, y: 11 };
 /** Path-space corner the delete affordance hangs off. */
 const DELETE_AT = { x: 19.5, y: 4 };
 const DELETE_R = 6.5;
+const LABEL_BOX = { w: 20, h: 12 };
 
 interface MarkerGeom {
   anchor: CommentAnchor;
-  /** Where the 24x24 path origin lands, in image coords. */
-  x0: number;
-  y0: number;
+  /** The image point the marker belongs to. */
+  x: number;
+  y: number;
+  /** Where the 24x24 path origin lands relative to it, in screen px. */
+  ox: number;
+  oy: number;
 }
 
 function countLabel(anchor: CommentAnchor): string | null {
@@ -54,9 +62,7 @@ function countLabel(anchor: CommentAnchor): string | null {
 export function layoutMarkers(
   anchors: CommentAnchor[],
   visibleAnnotations: CanonicalAnnotation[],
-  scale: number,
 ): MarkerGeom[] {
-  const k = SIZE / 24 / scale;
   const byId = new Map(visibleAnnotations.map((a) => [a.id, a]));
   const out: MarkerGeom[] = [];
 
@@ -64,12 +70,12 @@ export function layoutMarkers(
     if (anchor.target.kind === "point") {
       // The tail tip is the thing that marks the spot.
       const [x, y] = anchor.target.at;
-      out.push({ anchor, x0: x - TAIL.x * k, y0: y - TAIL.y * k });
+      out.push({ anchor, x, y, ox: -TAIL.x * K, oy: -TAIL.y * K });
     } else {
       const ann = byId.get(anchor.target.annotationId);
       if (!ann) continue;
       const b = getAnnotationBounds(ann);
-      out.push({ anchor, x0: b.x + b.w - CENTER.x * k, y0: b.y - CENTER.y * k });
+      out.push({ anchor, x: b.x + b.w, y: b.y, ox: -CENTER.x * K, oy: -CENTER.y * K });
     }
   }
   return out;
@@ -109,19 +115,22 @@ export function CommentMarkers({
   onSelect,
   onDelete,
 }: Props) {
-  const u = 1 / scale;
-  const k = SIZE / 24 / scale;
-  const markers = layoutMarkers(anchors, visibleAnnotations, scale);
+  const markers = layoutMarkers(anchors, visibleAnnotations);
 
   return (
     <>
-      {markers.map(({ anchor, x0, y0 }) => {
+      {markers.map(({ anchor, x, y, ox, oy }) => {
         const label = countLabel(anchor);
         const isSelected = selectedId === anchor.id;
         const isHovered = hoveredId === anchor.id;
         const stroke = anchor.resolved ? muted : accent;
-        const cx = x0 + CENTER.x * k;
-        const cy = y0 + CENTER.y * k;
+        // Bubble centre, in screen px from the anchor and in image px.
+        const cx = ox + CENTER.x * K;
+        const cy = oy + CENTER.y * K;
+        const centre: [number, number] = [x + cx / scale, y + cy / scale];
+        const dx = ox + DELETE_AT.x * K;
+        const dy = oy + DELETE_AT.y * K;
+        const arm = 2.5;
 
         return (
           <Group
@@ -132,49 +141,46 @@ export function CommentMarkers({
             onMouseDown={(e: KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; }}
             onClick={(e: KonvaEventObject<MouseEvent>) => {
               e.cancelBubble = true;
-              onSelect(anchor.id, [cx, cy]);
+              onSelect(anchor.id, centre);
             }}
           >
-            <Path
-              x={x0}
-              y={y0}
-              scaleX={k}
-              scaleY={k}
-              data={BUBBLE_PATH}
-              // Opaque interior, so the outline never has to fight the linework
-              // showing through it.
-              fill="#ffffff"
-              stroke={stroke}
-              strokeWidth={isSelected ? 3.4 : isHovered ? 2.9 : 2.4}
-              lineJoin="round"
-              lineCap="round"
-              shadowColor="#000000"
-              shadowBlur={isSelected ? 10 : 5}
-              shadowOpacity={0.3}
-            />
-            {label && (
-              <Text
-                x={cx - 10 * u}
-                y={cy - 6 * u}
-                width={20 * u}
-                height={12 * u}
-                text={label}
-                fontSize={10.5 * u}
-                fontStyle="700"
-                fontFamily="system-ui,-apple-system,'Segoe UI',sans-serif"
-                fill={stroke}
-                align="center"
-                verticalAlign="middle"
-                listening={false}
+            <ScreenSpace x={x} y={y} scale={scale}>
+              <Path
+                x={ox}
+                y={oy}
+                scaleX={K}
+                scaleY={K}
+                data={BUBBLE_PATH}
+                // Opaque interior, so the outline never has to fight the linework
+                // showing through it.
+                fill="#ffffff"
+                stroke={stroke}
+                strokeWidth={isSelected ? 3.4 : isHovered ? 2.9 : 2.4}
+                lineJoin="round"
+                lineCap="round"
+                shadowColor="#000000"
+                shadowBlur={isSelected ? 10 : 5}
+                shadowOpacity={0.3}
               />
-            )}
+              {label && (
+                <Text
+                  x={cx - LABEL_BOX.w / 2}
+                  y={cy - LABEL_BOX.h / 2}
+                  width={LABEL_BOX.w}
+                  height={LABEL_BOX.h}
+                  text={label}
+                  fontSize={10.5}
+                  fontStyle="700"
+                  fontFamily="system-ui,-apple-system,'Segoe UI',sans-serif"
+                  fill={stroke}
+                  align="center"
+                  verticalAlign="middle"
+                  listening={false}
+                />
+              )}
 
-            {/* Delete affordance — only on hover, and only when wired up. */}
-            {canDelete && isHovered && (() => {
-              const dx = x0 + DELETE_AT.x * k;
-              const dy = y0 + DELETE_AT.y * k;
-              const arm = 2.5 * u;
-              return (
+              {/* Delete affordance — only on hover, and only when wired up. */}
+              {canDelete && isHovered && (
                 <Group
                   onMouseDown={(e: KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; }}
                   onClick={(e: KonvaEventObject<MouseEvent>) => {
@@ -185,37 +191,38 @@ export function CommentMarkers({
                   <Circle
                     x={dx}
                     y={dy}
-                    radius={DELETE_R * u}
+                    radius={DELETE_R}
                     fill="#1f2937"
                     stroke="#ffffff"
-                    strokeWidth={1.2 * u}
+                    strokeWidth={1.2}
                   />
-                  <Line points={[dx - arm, dy - arm, dx + arm, dy + arm]} stroke="#ffffff" strokeWidth={1.5 * u} lineCap="round" listening={false} />
-                  <Line points={[dx + arm, dy - arm, dx - arm, dy + arm]} stroke="#ffffff" strokeWidth={1.5 * u} lineCap="round" listening={false} />
+                  <Line points={[dx - arm, dy - arm, dx + arm, dy + arm]} stroke="#ffffff" strokeWidth={1.5} lineCap="round" listening={false} />
+                  <Line points={[dx + arm, dy - arm, dx - arm, dy + arm]} stroke="#ffffff" strokeWidth={1.5} lineCap="round" listening={false} />
                 </Group>
-              );
-            })()}
+              )}
+            </ScreenSpace>
           </Group>
         );
       })}
 
       {/* Draft marker: shown from the click until the consumer stores the thread. */}
       {draftAt && (
-        <Path
-          listening={false}
-          opacity={0.8}
-          x={draftAt[0] - TAIL.x * k}
-          y={draftAt[1] - TAIL.y * k}
-          scaleX={k}
-          scaleY={k}
-          data={BUBBLE_PATH}
-          fill="#ffffff"
-          stroke={accent}
-          strokeWidth={2.4}
-          dash={[3, 2.5]}
-          lineJoin="round"
-          lineCap="round"
-        />
+        <ScreenSpace x={draftAt[0]} y={draftAt[1]} scale={scale} listening={false}>
+          <Path
+            opacity={0.8}
+            x={-TAIL.x * K}
+            y={-TAIL.y * K}
+            scaleX={K}
+            scaleY={K}
+            data={BUBBLE_PATH}
+            fill="#ffffff"
+            stroke={accent}
+            strokeWidth={2.4}
+            dash={[3, 2.5]}
+            lineJoin="round"
+            lineCap="round"
+          />
+        </ScreenSpace>
       )}
     </>
   );
