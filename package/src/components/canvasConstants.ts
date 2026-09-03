@@ -54,3 +54,18 @@ export type Action =
   | { type: "REPLACE_MANY"; removeIds: string[]; add: import("../types/canonical").CanonicalAnnotation[] }
   | { type: "REORDER"; id: string; direction: "forward" | "backward" }
   | { type: "BRING_TO_TOP"; id: string };
+
+/*
+ * Wheel zoom, calibrated so one mouse notch is the ×1.1 it always was.
+ *
+ * Chrome reports a notch as 100px, and ln(1.1) / 100 is the exponent per pixel
+ * that lands there. A trackpad's many small deltas then each move a little,
+ * which is the continuous zoom the fixed step could not give. The clamp keeps a
+ * flung wheel from jumping more than about a third of the current zoom in one
+ * event; the line and page figures are what a browser in those `deltaMode`s
+ * means by one unit, so those users get the same curve.
+ */
+export const WHEEL_ZOOM_PER_PX = Math.log(1.1) / 100;
+export const WHEEL_MAX_PX = 300;
+export const WHEEL_LINE_PX = 16;
+export const WHEEL_PAGE_PX = 400;

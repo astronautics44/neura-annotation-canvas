@@ -30,7 +30,7 @@ interface Props {
   dimensionContext?: { dpi: number; drawingScale: DrawingScaleInput };
 }
 
-export function LabelPanel({
+function LabelPanelImpl({
   annotations,
   labels,
   selectedIds,
@@ -889,3 +889,13 @@ const actionBtn: React.CSSProperties = {
   padding: 0,
   flexShrink: 0,
 };
+
+/*
+ * Memoised, because the panel is a row of DOM per annotation and none of those
+ * rows reads the viewport. The canvas re-renders on every wheel tick and every
+ * pan mousemove; without this the panel re-rendered every row with it, and on
+ * a drawing carrying a hundred and forty marks that was the difference between
+ * a pan that follows the hand and one that moves in steps. The handlers it is
+ * given are held stable on the canvas side for the same reason.
+ */
+export const LabelPanel = React.memo(LabelPanelImpl);

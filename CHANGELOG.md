@@ -2,6 +2,52 @@
 
 All notable changes to `@astronautics44/neura-annotation-canvas`.
 
+## 2.0.1
+
+A fix and two performance changes, all found on one screen: a takeoff review
+carrying a hundred and forty marks, in `takeoff-client`.
+
+### Fixed
+
+- **"Create <name>" is offered only when `onLabelsChange` is wired.** The class
+  it mints lives in the canvas's own state, under an id the canvas invented, and
+  that callback is the only way it can leave. A consumer that did not listen
+  never learned the class existed, could not save the marks filed under it, and
+  lost both the moment `labels` was re-seeded — the marks fell to *Unknown label*
+  with their work gone, while the consumer's own save reported success. Now the
+  popovers and the panel offer creation only where its output can go somewhere.
+  A consumer that wants canvas-minted classes wires `onLabelsChange`, which the
+  harness already did; nothing else changes for it.
+
+### Changed
+
+- **The annotations panel no longer re-renders on every viewport change.**
+  `scale` and `stagePos` are state on the canvas, so a wheel tick or a pan
+  mousemove is a render of the whole component, and the panel — a row of DOM
+  per annotation, none of which reads the viewport — was re-rendering every row
+  with it, because its handlers were fresh closures on every render. It is
+  `React.memo` now, the handlers it is given are stable, and the resolved theme
+  and the dimension context are memoised so the memo holds. On the drawing that
+  found this, that was the difference between a pan that follows the hand and
+  one that moves in steps.
+
+- **Wheel zoom follows the gesture rather than the event count.** A mouse notch
+  is one event with a large `deltaY`; a trackpad pinch is dozens with small
+  ones. Each used to apply a fixed ×1.1, so a pinch climbed a staircase. The
+  step is now proportional to the delta, calibrated so a notch is still exactly
+  ×1.1, clamped so a flung wheel cannot jump more than about a third in one
+  event, and `deltaMode` is honoured. **`zoomSpeed`** (default `1`) scales the
+  whole curve.
+
+### Upgrading from 2.0.0
+
+A patch by the product owner's call. `zoomSpeed` is a new optional prop, which semver would ordinarily make a minor; it is recorded here so nobody reads the number as a promise that the API did not grow.
+
+No runtime change is required unless you were relying on the canvas minting
+classes **without** listening to `onLabelsChange`. If you were, wire it — that
+is a one-line change and the behaviour is then identical. Everything else is
+additive: `zoomSpeed` is optional and defaults to the old notch step.
+
 ## 2.0.0
 
 Commenting. A major version by choice — the feature is additive and every 1.x

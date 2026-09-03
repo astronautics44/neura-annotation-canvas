@@ -42,6 +42,7 @@ import {
 } from "../utils/booleanOps";
 import {
   MIN_ZOOM, MAX_ZOOM, HANDLE_RADIUS, VERTEX_RADIUS, CLOSE_DIST,
+  WHEEL_ZOOM_PER_PX, WHEEL_MAX_PX, WHEEL_LINE_PX, WHEEL_PAGE_PX,
   AUTO_COLORS, zoomBtnStyle,
   type DrawState, type Action,
 } from "./canvasConstants";
@@ -65,6 +66,18 @@ interface Props {
   annotations?: CanonicalAnnotation[];
   onSave: (annotations: CanonicalAnnotation[]) => void;
   onChange?: (annotations: CanonicalAnnotation[]) => void;
+  /**
+   * Fires with the full label registry whenever the user creates a class from
+   * a label popover or the annotations panel.
+   *
+   * **Wiring this is what makes "Create <name>" appear.** A class minted on the
+   * canvas exists only in the canvas's own state, under an id it invented, and
+   * this callback is the only way it can leave. A consumer that does not listen
+   * cannot persist the class, cannot recognise the marks filed under it, and
+   * loses both the moment `labels` is re-seeded — so the affordance is not
+   * offered at all until there is somewhere for its output to go. Omit it and
+   * the popovers pick from `labels` and nothing else.
+   */
   onLabelsChange?: (labels: LabelMap[]) => void;
 
   // --- selection ---
@@ -241,6 +254,13 @@ interface Props {
   drawingScale?: DrawingScale;
   /** Fires when the user edits the scale in the status bar. */
   onDrawingScaleChange?: (scale: DrawingScale) => void;
+  /**
+   * How far one wheel gesture zooms. `1` keeps a mouse notch at the ×1.1 step
+   * it has always been; a trackpad's smaller deltas scale down with it, so a
+   * pinch is continuous rather than stepped. `0.5` halves the whole curve,
+   * `2` doubles it. Default: 1
+   */
+  zoomSpeed?: number;
 
   // --- sticky class ---
   /**
@@ -369,6 +389,7 @@ export function AnnotationCanvas({
   dpi,
   drawingScale: drawingScaleProp,
   onDrawingScaleChange,
+  zoomSpeed = 1,
   enableActiveLabel = true,
   activeLabel: activeLabelProp,
   defaultActiveLabel,
@@ -378,7 +399,12 @@ export function AnnotationCanvas({
   className,
   theme: themeProp,
 }: Props) {
-  const resolved = resolveTheme(themeProp);
+  /*
+   * Resolved once per theme, not once per render. This object reaches every
+   * chip, card and marker as a prop, and a fresh identity on every viewport
+   * change would defeat any memo below it.
+   */
+  const resolved = useMemo(() => resolveTheme(themeProp), [themeProp]);
   const rootRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<StageType>(null);
@@ -1420,13 +1446,27 @@ export function AnnotationCanvas({
     if (!stage) return;
     const ptr = stage.getPointerPosition();
     if (!ptr) return;
-    const dir = e.evt.deltaY > 0 ? -1 : 1;
-    const newScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, scale * (dir > 0 ? 1.1 : 1 / 1.1)));
+    /*
+     * The step follows the gesture rather than the event count.
+     *
+     * A mouse wheel notch is one event with a large `deltaY`; a trackpad pinch
+     * or two-finger scroll is dozens of events with small ones. A fixed factor
+     * per event made the second gesture jump a full step on every one of those,
+     * so zooming read as a staircase. Scaling by the delta makes a small
+     * movement a small change and a notch the same step it always was, and
+     * `deltaMode` is honoured so a browser reporting lines or pages rather than
+     * pixels gets the same feel. `zoomSpeed` tunes the whole curve.
+     */
+    const pixels = e.evt.deltaY * (e.evt.deltaMode === 1 ? WHEEL_LINE_PX : e.evt.deltaMode === 2 ? WHEEL_PAGE_PX : 1);
+    const clamped = Math.max(-WHEEL_MAX_PX, Math.min(WHEEL_MAX_PX, pixels));
+    const factor = Math.exp(-clamped * WHEEL_ZOOM_PER_PX * zoomSpeed);
+    const newScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, scale * factor));
+    if (newScale === scale) return;
     const mouseX = (ptr.x - stagePos.x) / scale;
     const mouseY = (ptr.y - stagePos.y) / scale;
     setScale(newScale);
     setStagePos({ x: ptr.x - mouseX * newScale, y: ptr.y - mouseY * newScale });
-  }, [scale, stagePos]);
+  }, [scale, stagePos, zoomSpeed]);
 
   /*
    * `readonly` is deliberately not a guard here, and this is a fix rather than a
@@ -1661,6 +1701,63 @@ export function AnnotationCanvas({
     return id;
   }, [labels, onLabelsChange]);
 
+  /*
+   * "Create <name>" is offered only where its result can go somewhere.
+   *
+   * The class it mints lives in this component's state under an id this
+   * component invented, and `onLabelsChange` is the only channel out. Without a
+   * listener the consumer never learns the class exists, cannot save the marks
+   * filed under it, and the next `labels` prop wipes it — the marks then fall to
+   * "Unknown label" with their work gone. Nothing about that is recoverable
+   * from the consumer's side, so the affordance stays off until it is wired.
+   */
+  const createLabel = !readonly && onLabelsChange !== undefined ? handleCreateLabel : undefined;
+
+  /*
+   * The annotations panel's handlers, held stable so the panel can be memoised.
+   *
+   * The panel is a row per annotation, and every one of them is DOM. Given a
+   * fresh closure on each render it re-rendered all of those rows on every
+   * wheel tick and every pan mousemove, because `scale` and `stagePos` are
+   * state on this component and a viewport change is a render of it. On a
+   * drawing carrying a hundred and forty marks that was the whole of the lag:
+   * the rows do not read the viewport at all.
+   */
+  const handlePanelSelect = useCallback((id: string, additive: boolean) => {
+    if (additive) {
+      setSelectedIds((prev) =>
+        prev.includes(id) ? prev.filter((sid) => sid !== id) : [...prev, id],
+      );
+    } else {
+      setSelectedIds([id]);
+    }
+    // Raising the clicked annotation reorders the array, and array order
+    // is part of the onSave/onChange payload — so it is a mutation, and
+    // readonly means no mutations.
+    if (!readonly) dispatch({ type: "BRING_TO_TOP", id });
+    // The same centre-if-off-screen the `revealSelection` prop uses, so
+    // the built-in list and a consumer's own list behave identically. Through
+    // the ref, because `revealAnnotations` itself is rebuilt on every viewport
+    // change and depending on it here would hand the panel a new handler on
+    // every one of them, which is the churn this handler exists to stop.
+    revealRef.current([id]);
+  }, [readonly, setSelectedIds, dispatch]);
+
+  const handlePanelDelete = useCallback((id: string) => {
+    dispatchAndNotify({ type: "DELETE", id });
+    setSelectedIds((prev) => prev.filter((sid) => sid !== id));
+  }, [dispatchAndNotify, setSelectedIds]);
+
+  const handlePanelDeleteSelected = useCallback(() => {
+    if (selectedIds.length === 0 || readonly) return;
+    if (selectedIds.length === 1) {
+      dispatchAndNotify({ type: "DELETE", id: selectedIds[0]! });
+    } else {
+      dispatchAndNotify({ type: "DELETE_MANY", ids: selectedIds });
+    }
+    setSelectedIds([]);
+  }, [selectedIds, readonly, dispatchAndNotify, setSelectedIds]);
+
   const popoverPos = (): { x: number; y: number } | null => {
     if (!["bbox-pending", "polygon-pending", "polyline-pending", "line-pending", "point-pending", "circle-pending", "count-pending"].includes(draw.phase)) return null;
     const pos = (draw as { pos: [number, number] }).pos;
@@ -1669,10 +1766,10 @@ export function AnnotationCanvas({
 
   const pPos = popoverPos();
 
-  const dimensionContext =
-    dpi !== undefined && drawingScale
-      ? { dpi, drawingScale }
-      : undefined;
+  const dimensionContext = useMemo(
+    () => (dpi !== undefined && drawingScale ? { dpi, drawingScale } : undefined),
+    [dpi, drawingScale],
+  );
 
   // Screen position for the relabel popover — top-left corner of the annotation
   const relabelPos = (() => {
@@ -2256,7 +2353,7 @@ export function AnnotationCanvas({
                 handleLabelSelect(label, symbolSize);
               }}
               onCancel={handlePopoverCancel}
-              onCreateLabel={readonly ? undefined : handleCreateLabel}
+              onCreateLabel={createLabel}
             />
           )}
           {labelPickerOpen && !readonly && enableActiveLabel && (
@@ -2268,7 +2365,7 @@ export function AnnotationCanvas({
                 setActiveLabel({ id: label, ...(symbolSize ? { symbolSize } : {}) })
               }
               onCancel={() => setLabelPickerOpen(false)}
-              onCreateLabel={handleCreateLabel}
+              onCreateLabel={createLabel}
             />
           )}
           {relabelPos && !pPos && (() => {
@@ -2284,7 +2381,7 @@ export function AnnotationCanvas({
                   setRelabelId(null);
                 }}
                 onCancel={() => setRelabelId(null)}
-                onCreateLabel={readonly ? undefined : handleCreateLabel}
+                onCreateLabel={createLabel}
               />
             );
           })()}
@@ -2298,39 +2395,13 @@ export function AnnotationCanvas({
           onVisibilityChange={handleVisibilityChange}
           readonly={readonly}
           {...(dimensionContext ? { dimensionContext } : {})}
-          onCreateLabel={readonly ? undefined : handleCreateLabel}
+          onCreateLabel={createLabel}
           width={resolved.panelWidth}
           height={containerSize.h}
-          onSelect={(id, additive) => {
-            if (additive) {
-              setSelectedIds((prev) =>
-                prev.includes(id) ? prev.filter((sid) => sid !== id) : [...prev, id],
-              );
-            } else {
-              setSelectedIds([id]);
-            }
-            // Raising the clicked annotation reorders the array, and array order
-            // is part of the onSave/onChange payload — so it is a mutation, and
-            // readonly means no mutations.
-            if (!readonly) dispatch({ type: "BRING_TO_TOP", id });
-            // The same centre-if-off-screen the `revealSelection` prop uses, so
-            // the built-in list and a consumer's own list behave identically.
-            revealAnnotations([id]);
-          }}
-          onDelete={(id) => {
-            dispatchAndNotify({ type: "DELETE", id });
-            setSelectedIds((prev) => prev.filter((sid) => sid !== id));
-          }}
-          onDeleteSelected={() => {
-            if (selectedIds.length === 0 || readonly) return;
-            if (selectedIds.length === 1) {
-              dispatchAndNotify({ type: "DELETE", id: selectedIds[0]! });
-            } else {
-              dispatchAndNotify({ type: "DELETE_MANY", ids: selectedIds });
-            }
-            setSelectedIds([]);
-          }}
-          onRelabel={(id, label, symbolSize) => applyRelabel(id, label, symbolSize)}
+          onSelect={handlePanelSelect}
+          onDelete={handlePanelDelete}
+          onDeleteSelected={handlePanelDeleteSelected}
+          onRelabel={applyRelabel}
         />
         )}
       </div>
