@@ -162,7 +162,7 @@ interface AnnotationCanvasProps {
   annotations?: CanonicalAnnotation[]; // pre-adapted engine output; seeds state, see note below
   onSave: (annotations: CanonicalAnnotation[]) => void;
   onChange?: (annotations: CanonicalAnnotation[]) => void; // fires on every mutation
-  onLabelsChange?: (labels: LabelMap[]) => void; // fires when user creates a new label
+  onLabelsChange?: (labels: LabelMap[]) => void; // fires when user creates a new label; wiring it is what makes "Create" appear
 
   // Tools
   tools?: ToolType[]; // subset to expose; default: all ["select","bbox","polygon","line","point","circle"]
@@ -910,7 +910,7 @@ Appears after completing a draw gesture (or when relabeling). Supports:
 - Arrow keys to navigate
 - `Enter` to select, `Escape` to cancel (discards the annotation)
 - If only one label exists and it has no `symbolSize` config, it is auto-selected — no popover shown
-- If the typed name doesn't match any label, a **Create "..."** row appears (disabled in `readonly` mode)
+- If the typed name doesn't match any label, a **Create "..."** row appears — only when `onLabelsChange` is wired, and never in `readonly` mode. A class minted here lives in the canvas's own state until that callback carries it out, so a consumer that is not listening is not offered one (2.0.1)
 - When the selected label has `symbolSize: "optional" | "required"`, a second step collects **Attribute**, **Value**, and **Unit** (see [Symbol size](#symbol-size-manual-takeoff-dimensions))
 - A **Keep for next shapes** checkbox pins the label being picked, so following shapes skip the popover entirely — only when `enableActiveLabel` is on (see [Pinned annotation class](#pinned-annotation-class))
 
@@ -1231,7 +1231,7 @@ All state lives inside `AnnotationCanvas`. No external store required.
 
 - `onSave` fires only when the user explicitly saves (`Ctrl+S` or a Save button you add externally)
 - `onChange` fires after every mutation (add, update, delete, move)
-- `onLabelsChange` fires when the user creates a new label via the popover
+- `onLabelsChange` fires when the user creates a new label via the popover, and its presence is what enables creating one: omit it and the popovers pick from `labels` only
 
 Undo/redo history is kept in-memory (up to 100 steps). It resets when the `annotations` prop changes (e.g. when switching fixtures). The toolbar undo/redo buttons are automatically enabled/disabled based on history availability.
 
