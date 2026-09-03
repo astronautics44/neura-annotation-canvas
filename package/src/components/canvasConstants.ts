@@ -56,16 +56,20 @@ export type Action =
   | { type: "BRING_TO_TOP"; id: string };
 
 /*
- * Wheel zoom, calibrated so one mouse notch is the ×1.1 it always was.
+ * Wheel zoom. Two gains, because two devices send the same event.
  *
- * Chrome reports a notch as 100px, and ln(1.1) / 100 is the exponent per pixel
- * that lands there. A trackpad's many small deltas then each move a little,
- * which is the continuous zoom the fixed step could not give. The clamp keeps a
- * flung wheel from jumping more than about a third of the current zoom in one
- * event; the line and page figures are what a browser in those `deltaMode`s
- * means by one unit, so those users get the same curve.
+ * A mouse notch is one event carrying about 100px of `deltaY`. A trackpad
+ * pinch or two-finger scroll is dozens of events carrying 2 to 10px each, and
+ * a pinch arrives with `ctrlKey` set. One curve cannot serve both: gentle
+ * enough for a notch, a pinch barely moves; steep enough for a pinch, a notch
+ * leaps. So a notch lands at about x1.22, crisper than the x1.1 it used to be,
+ * and a pinch is roughly five times steeper per pixel, which puts a short
+ * pinch at about x2.7. The clamp caps any single event at about x1.5 so a
+ * flung wheel cannot leap. The line and page figures are what a browser in
+ * those `deltaMode`s means by one unit.
  */
-export const WHEEL_ZOOM_PER_PX = Math.log(1.1) / 100;
-export const WHEEL_MAX_PX = 300;
+export const WHEEL_ZOOM_PER_PX = 0.002;
+export const PINCH_ZOOM_PER_PX = 0.01;
+export const WHEEL_MAX_EXPONENT = Math.log(1.5);
 export const WHEEL_LINE_PX = 16;
 export const WHEEL_PAGE_PX = 400;

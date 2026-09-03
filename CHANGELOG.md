@@ -2,6 +2,26 @@
 
 All notable changes to `@astronautics44/neura-annotation-canvas`.
 
+## 2.0.2
+
+### Reverted
+
+- **"Create <name>" is back regardless of `onLabelsChange`**, as it was through
+  2.0.0. 2.0.1 hid it from consumers that did not wire the callback; other
+  consumers rely on the row and the product owner wants it offered everywhere.
+  The rule stands as documentation instead: a consumer that lets users create
+  classes must handle `onLabelsChange`, because that callback is the only way a
+  minted class leaves the canvas.
+
+### Changed
+
+- **Wheel zoom has two gains.** 2.0.1 made the step proportional to `deltaY`
+  and calibrated it to a mouse notch, which left a trackpad pinch smooth and
+  about ten times less travel per gesture than before. A pinch arrives as a
+  wheel event with `ctrlKey` in small deltas, so it now gets a gain roughly five
+  times steeper per pixel: a short pinch is about ×2.7, a notch about ×1.22.
+  Any single event is capped at ×1.5. `zoomSpeed` still scales the whole curve.
+
 ## 2.0.1
 
 A fix and two performance changes, all found on one screen: a takeoff review
