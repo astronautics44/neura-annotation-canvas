@@ -4,6 +4,10 @@ export const MIN_ZOOM = 0.05;
 export const MAX_ZOOM = 20;
 export const HANDLE_RADIUS = 7;
 export const VERTEX_RADIUS = 5;
+/** A count mark's radius, in screen pixels. */
+export const POINT_RADIUS = 8;
+/** One press of the zoom keys or buttons. */
+export const KEY_ZOOM_STEP = 1.2;
 export const CLOSE_DIST = 10;
 
 export const AUTO_COLORS = [

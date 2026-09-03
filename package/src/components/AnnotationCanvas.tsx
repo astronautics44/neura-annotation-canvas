@@ -4,6 +4,7 @@ import React, {
   useReducer,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -30,6 +31,13 @@ import { AnnotationChip } from "./AnnotationChip";
 import { AnnotationCard } from "./AnnotationCard";
 import { CommentMarkers } from "./CommentMarkers";
 import { CommentComposer } from "./CommentComposer";
+import { ScreenSpace } from "./ScreenSpace";
+import { CursorReadout } from "./CursorReadout";
+import { createValueStore } from "./valueStore";
+import {
+  INITIAL_VIEWPORT, VIEWPORT_SETTLE_MS, paintViewport, screenToImage, imageToScreen as viewportToScreen,
+  type Viewport,
+} from "./viewport";
 import {
   getAnnotationRings,
   hollowAnnotations,
@@ -41,17 +49,39 @@ import {
   type ShapeMeta,
 } from "../utils/booleanOps";
 import {
-  MIN_ZOOM, MAX_ZOOM, HANDLE_RADIUS, VERTEX_RADIUS, CLOSE_DIST,
+  MIN_ZOOM, MAX_ZOOM, HANDLE_RADIUS, VERTEX_RADIUS, POINT_RADIUS, CLOSE_DIST, KEY_ZOOM_STEP,
   WHEEL_ZOOM_PER_PX, PINCH_ZOOM_PER_PX, WHEEL_MAX_EXPONENT, WHEEL_LINE_PX, WHEEL_PAGE_PX,
   AUTO_COLORS, zoomBtnStyle,
   type DrawState, type Action,
 } from "./canvasConstants";
 import {
-  hexToRgba, bboxToKonva, screenToImage, centroid, nearestPointOnSegment,
+  hexToRgba, bboxToKonva, centroid, nearestPointOnSegment,
   bboxHandles, slugify, annotationReducer, getAnnotationBounds, boxesIntersect,
 } from "./canvasHelpers";
 
 export type { DrawingScale } from "../utils/drawingScale";
+
+/** Where a label chip sits relative to its mark, in screen pixels. */
+const BBOX_CHIP_OFFSET = { dx: 0, dy: -16 };
+const POINT_CHIP_OFFSET = { dx: 10, dy: -8 };
+const SELECTION_GLOW_PX = 16;
+/** In-progress drawing overlay, in screen pixels. */
+const DRAW_DASH = [4, 4];
+const DRAW_VERTEX_RADIUS = 4;
+const DRAW_CLOSE_RADIUS = 6;
+const DRAW_CENTRE_RADIUS = 3;
+const HINT_OFFSET = 10;
+const HINT_HEIGHT = 18;
+const HINT_CHAR_WIDTH = 7;
+const HINT_PADDING = 12;
+
+interface AnnotationHandlers {
+  onClick: (e: KonvaEventObject<MouseEvent>) => void;
+  onMouseDown: (e: KonvaEventObject<MouseEvent>) => void;
+  onDblClick: (e: KonvaEventObject<MouseEvent>) => void;
+  onMouseEnter: () => void;
+  onMouseLeave: () => void;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -418,6 +448,7 @@ export function AnnotationCanvas({
   const past = useRef<HistoryStep[]>([]);
   const future = useRef<HistoryStep[]>([]);
   const annotationsRef = useRef(annotations);
+  const annotationHandlers = useRef(new Map<string, AnnotationHandlers>());
   annotationsRef.current = annotations;
   // Tracks last click timestamps for double-click finish detection
   const lastPolylineClickRef = useRef<number>(0);
@@ -464,8 +495,102 @@ export function AnnotationCanvas({
     [selectionIsControlled],
   );
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
-  const [scale, setScale] = useState(1);
+  /*
+   * The viewport lives in a ref and is mirrored into state.
+   *
+   * The ref is the truth: a wheel tick or a pan mousemove writes it and paints
+   * it straight onto the Konva stage, which costs one layer draw. State is
+   * what React last rendered with, and it is brought up to date once the
+   * gesture settles. It used to be state alone, and every one of those events
+   * was a render of every shape on the sheet, with the shapes' stroke widths
+   * and handle radii all divided by the scale so every prop changed too. On a
+   * trackpad that is an event per frame, and on a sheet carrying a few hundred
+   * marks each of them cost more than the frame.
+   *
+   * Anything that must hold at the instant of an input reads the ref. Anything
+   * rendered reads state, and is laid out so that a stale scale is harmless:
+   * strokes are drawn with `strokeScaleEnabled` off, and everything else sized
+   * in screen pixels sits in a `ScreenSpace` group that `paintViewport` keeps
+   * counter-scaled by name.
+   */
+  const [viewport, setViewport] = useState<Viewport>(INITIAL_VIEWPORT);
+  const viewportRef = useRef<Viewport>(INITIAL_VIEWPORT);
+  const paintedViewport = useRef<Viewport>(INITIAL_VIEWPORT);
+  const paintFrame = useRef<number | null>(null);
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scale = viewport.scale;
+  const stagePos = viewport;
+  const [cursor] = useState(() => createValueStore<readonly [number, number]>([0, 0]));
+
+  /*
+   * Painting is per frame, not per event. A trackpad can deliver more wheel
+   * events than the display has frames, and the counter-scale of a few hundred
+   * groups is the one part of a paint that is not free, so the ref takes every
+   * event and the stage takes the latest value once per frame.
+   */
+  const cancelScheduledPaint = useCallback(() => {
+    if (paintFrame.current !== null) {
+      cancelAnimationFrame(paintFrame.current);
+      paintFrame.current = null;
+    }
+  }, []);
+
+  const schedulePaint = useCallback(() => {
+    if (paintFrame.current !== null) return;
+    paintFrame.current = requestAnimationFrame(() => {
+      paintFrame.current = null;
+      const stage = stageRef.current;
+      if (!stage) return;
+      paintViewport(stage, viewportRef.current);
+      paintedViewport.current = viewportRef.current;
+      stage.draw();
+    });
+  }, []);
+
+  const applyViewport = useCallback((next: Viewport, commit: "now" | "settled") => {
+    viewportRef.current = next;
+    if (settleTimer.current) {
+      clearTimeout(settleTimer.current);
+      settleTimer.current = null;
+    }
+    if (commit === "now") {
+      cancelScheduledPaint();
+      setViewport(next);
+      return;
+    }
+    schedulePaint();
+    settleTimer.current = setTimeout(() => {
+      settleTimer.current = null;
+      setViewport(viewportRef.current);
+    }, VIEWPORT_SETTLE_MS);
+  }, [cancelScheduledPaint, schedulePaint]);
+
+  useEffect(() => () => {
+    if (settleTimer.current) clearTimeout(settleTimer.current);
+    cancelScheduledPaint();
+  }, [cancelScheduledPaint]);
+
+  /*
+   * A render that lands mid-gesture — a hover, say — carries the settled
+   * viewport in its props, so any screen-space group it mounts is sized for
+   * that, and react-konva has just written the settled stage transform back.
+   * Put the stage where the ref says before the frame is painted. When state
+   * is current there is nothing to do: the props already say the same thing.
+   */
+  useLayoutEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const live = viewportRef.current;
+    if (live === viewport && live === paintedViewport.current) return;
+    paintViewport(stage, live);
+    paintedViewport.current = live;
+    stage.batchDraw();
+  });
+
+  const zoomBy = useCallback((factor: number) => {
+    const current = viewportRef.current;
+    applyViewport({ ...current, scale: Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, current.scale * factor)) }, "now");
+  }, [applyViewport]);
 
   // ---------------------------------------------------------------------------
   // Comments
@@ -508,8 +633,8 @@ export function AnnotationCanvas({
   const activeCommentId = commentControlled ? selectedCommentId ?? null : internalCommentId;
 
   const imageToScreen = useCallback(
-    (pt: [number, number]) => ({ x: pt[0] * scale + stagePos.x, y: pt[1] * scale + stagePos.y }),
-    [scale, stagePos],
+    (pt: [number, number]) => viewportToScreen(viewportRef.current, pt),
+    [],
   );
 
   const selectComment = useCallback((id: string | null, at: [number, number] | null) => {
@@ -577,7 +702,6 @@ export function AnnotationCanvas({
       setDraftComment(null);
     }
   }, [comments]);
-  const [cursorImg, setCursorImg] = useState<[number, number]>([0, 0]);
   const [spaceDown, setSpaceDown] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const [draggingAnnotation, setDraggingAnnotation] = useState<{ id: string; startImg: [number, number] } | null>(null);
@@ -706,6 +830,7 @@ export function AnnotationCanvas({
     if (initialAnnotations && initialAnnotations !== annotationsRef.current) {
       past.current = [];
       future.current = [];
+      annotationHandlers.current.clear();
       setCanUndo(false);
       setCanRedo(false);
       dispatch({ type: "LOAD", payload: initialAnnotations });
@@ -726,9 +851,8 @@ export function AnnotationCanvas({
     if (!img) return;
     const padding = 32;
     const s = Math.min((containerSize.w - padding * 2) / img.width, (containerSize.h - padding * 2) / img.height, 1);
-    setScale(s);
-    setStagePos({ x: (containerSize.w - img.width * s) / 2, y: (containerSize.h - img.height * s) / 2 });
-  }, [img, containerSize]);
+    applyViewport({ scale: s, x: (containerSize.w - img.width * s) / 2, y: (containerSize.h - img.height * s) / 2 }, "now");
+  }, [img, containerSize, applyViewport]);
 
   useEffect(() => { if (img) fitToScreen(); }, [img, fitToScreen]);
 
@@ -751,25 +875,25 @@ export function AnnotationCanvas({
       .map((ann) => (ann.type === "point" ? ann.points[0]! : centroid(ann.points)));
     if (centres.length === 0) return;
 
-    const offScreen = centres.some(([x, y]) => {
-      const sx = x * scale + stagePos.x;
-      const sy = y * scale + stagePos.y;
+    const current = viewportRef.current;
+    const offScreen = centres.some((centre) => {
+      const { x: sx, y: sy } = viewportToScreen(current, centre);
       return sx < 0 || sx > containerSize.w || sy < 0 || sy > containerSize.h;
     });
     if (!offScreen) return;
 
     const cx = centres.reduce((sum, c) => sum + c[0], 0) / centres.length;
     const cy = centres.reduce((sum, c) => sum + c[1], 0) / centres.length;
-    setStagePos({ x: containerSize.w / 2 - cx * scale, y: containerSize.h / 2 - cy * scale });
-  }, [scale, stagePos, containerSize]);
+    applyViewport({ ...current, x: containerSize.w / 2 - cx * current.scale, y: containerSize.h / 2 - cy * current.scale }, "now");
+  }, [containerSize, applyViewport]);
 
   /*
    * Reveal on a change of selection, never on a change of viewport.
    *
-   * `revealAnnotations` closes over `stagePos`, so listing it as a dependency
-   * would re-run this on every pan, and yank the user back the moment they
-   * scrolled away from a shape that was still selected. The ref keeps the effect
-   * keyed to the selection alone.
+   * `revealAnnotations` reads the viewport through its ref, so it is not
+   * rebuilt on a pan; the effect is still keyed to the selection alone through
+   * a ref of its own, so that a change of container size cannot yank the user
+   * back to a shape they scrolled away from while it was still selected.
    *
    * The frame's delay is for the one ordering that would otherwise be wrong: a
    * consumer mounting with a selection already set races the fit-to-screen
@@ -967,8 +1091,8 @@ export function AnnotationCanvas({
       if (e.code === "Space") { setSpaceDown(true); return; }
 
       if ((e.metaKey || e.ctrlKey) && e.key === "0") { e.preventDefault(); fitToScreen(); return; }
-      if ((e.metaKey || e.ctrlKey) && e.key === "=") { e.preventDefault(); setScale((s) => Math.min(s * 1.2, MAX_ZOOM)); return; }
-      if ((e.metaKey || e.ctrlKey) && e.key === "-") { e.preventDefault(); setScale((s) => Math.max(s / 1.2, MIN_ZOOM)); return; }
+      if ((e.metaKey || e.ctrlKey) && e.key === "=") { e.preventDefault(); zoomBy(KEY_ZOOM_STEP); return; }
+      if ((e.metaKey || e.ctrlKey) && e.key === "-") { e.preventDefault(); zoomBy(1 / KEY_ZOOM_STEP); return; }
       if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); onSave(annotationsRef.current); return; }
 
       // Pinned class: 1–9 pins the nth label, 0 unpins
@@ -1081,8 +1205,8 @@ export function AnnotationCanvas({
     if (!stage) return [0, 0];
     const ptr = stage.getPointerPosition();
     if (!ptr) return [0, 0];
-    return screenToImage(ptr.x, ptr.y, stagePos.x, stagePos.y, scale);
-  }, [stagePos, scale]);
+    return screenToImage(viewportRef.current, ptr.x, ptr.y);
+  }, []);
 
   /** Inserts a new vertex at `pos` after segment index `segIdx`, then starts dragging it. */
   const splitEdgeAt = useCallback((ann: CanonicalAnnotation, segIdx: number, pos: [number, number]) => {
@@ -1163,8 +1287,9 @@ export function AnnotationCanvas({
           <Line
             points={[x1, y1, x2, y2]}
             stroke="transparent"
-            strokeWidth={1 / scale}
-            hitStrokeWidth={12 / scale}
+            strokeWidth={1}
+            hitStrokeWidth={12}
+            strokeScaleEnabled={false}
             onMouseMove={(e: KonvaEventObject<MouseEvent>) => {
               e.cancelBubble = true;
               const p = nearestPointOnSegment(getImagePos(e), [x1, y1], [x2, y2]);
@@ -1178,12 +1303,13 @@ export function AnnotationCanvas({
             }}
           />
           {edgeHover?.annId === ann.id && edgeHover.segIdx === i && (
-            <Circle
-              x={edgeHover.pos[0]} y={edgeHover.pos[1]}
-              radius={(HANDLE_RADIUS * 0.65) / scale}
-              fill={resolved.accent} stroke={resolved.handleFill} strokeWidth={1.5 / scale}
-              opacity={0.85} listening={false}
-            />
+            <ScreenSpace x={edgeHover.pos[0]} y={edgeHover.pos[1]} scale={scale} listening={false}>
+              <Circle
+                radius={HANDLE_RADIUS * 0.65}
+                fill={resolved.accent} stroke={resolved.handleFill} strokeWidth={1.5}
+                opacity={0.85}
+              />
+            </ScreenSpace>
           )}
         </Group>
       ));
@@ -1193,17 +1319,19 @@ export function AnnotationCanvas({
       const mx = (x1 + x2) / 2;
       const my = (y1 + y2) / 2;
       return (
-        <Circle key={`mid-${i}`} x={mx} y={my}
-          radius={(HANDLE_RADIUS * 0.65) / scale}
-          fill={resolved.accent}
-          stroke={resolved.handleFill}
-          strokeWidth={1.5 / scale}
-          opacity={0.85}
-          onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
-            e.cancelBubble = true;
-            splitEdgeAt(ann, i, [mx, my]);
-          }}
-        />
+        <ScreenSpace key={`mid-${i}`} x={mx} y={my} scale={scale}>
+          <Circle
+            radius={HANDLE_RADIUS * 0.65}
+            fill={resolved.accent}
+            stroke={resolved.handleFill}
+            strokeWidth={1.5}
+            opacity={0.85}
+            onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
+              e.cancelBubble = true;
+              splitEdgeAt(ann, i, [mx, my]);
+            }}
+          />
+        </ScreenSpace>
       );
     });
   }, [edgeSplitMode, scale, resolved, getImagePos, edgeHover, splitEdgeAt]);
@@ -1215,7 +1343,7 @@ export function AnnotationCanvas({
 
   const handleStageMouseDown = useCallback((e: KonvaEventObject<MouseEvent>) => {
     if (shouldPan(e)) {
-      panStart.current = { x: e.evt.clientX, y: e.evt.clientY, stageX: stagePos.x, stageY: stagePos.y };
+      panStart.current = { x: e.evt.clientX, y: e.evt.clientY, stageX: viewportRef.current.x, stageY: viewportRef.current.y };
       setIsPanning(true);
       return;
     }
@@ -1247,7 +1375,7 @@ export function AnnotationCanvas({
         if (draw.pts.length >= 3) {
           const first = draw.pts[0]!;
           const dx = first[0] - imgPos[0], dy = first[1] - imgPos[1];
-          if (Math.sqrt(dx * dx + dy * dy) * scale < CLOSE_DIST) {
+          if (Math.sqrt(dx * dx + dy * dy) * viewportRef.current.scale < CLOSE_DIST) {
             setDraw({ phase: "polygon-pending", pts: draw.pts, pos: imgPos });
             return;
           }
@@ -1306,20 +1434,20 @@ export function AnnotationCanvas({
       }
       return;
     }
-  }, [shouldPan, readonly, tool, draw, getImagePos, scale, stagePos, polylineFinishAction, countFinishAction, beginComment]);
+  }, [shouldPan, readonly, tool, draw, getImagePos, polylineFinishAction, countFinishAction, beginComment]);
 
   const handleStageMouseMove = useCallback((e: KonvaEventObject<MouseEvent>) => {
     const stage = stageRef.current;
     if (!stage) return;
     const ptr = stage.getPointerPosition();
     if (!ptr) return;
-    const imgPos = screenToImage(ptr.x, ptr.y, stagePos.x, stagePos.y, scale);
-    setCursorImg(imgPos);
+    const imgPos = screenToImage(viewportRef.current, ptr.x, ptr.y);
+    cursor.set(imgPos);
 
     if (panStart.current) {
       const dx = e.evt.clientX - panStart.current.x;
       const dy = e.evt.clientY - panStart.current.y;
-      setStagePos({ x: panStart.current.stageX + dx, y: panStart.current.stageY + dy });
+      applyViewport({ ...viewportRef.current, x: panStart.current.stageX + dx, y: panStart.current.stageY + dy }, "settled");
       return;
     }
 
@@ -1376,12 +1504,13 @@ export function AnnotationCanvas({
         setDraggingVertex({ ...draggingVertex, startImg: imgPos });
       }
     }
-  }, [draw, stagePos, scale, draggingAnnotation, draggingHandle, draggingVertex, selectedIds, dispatch, marquee]);
+  }, [draw, cursor, applyViewport, draggingAnnotation, draggingHandle, draggingVertex, selectedIds, dispatch, marquee]);
 
   const handleStageMouseUp = useCallback((e: KonvaEventObject<MouseEvent>) => {
     if (panStart.current) {
       panStart.current = null;
       setIsPanning(false);
+      applyViewport(viewportRef.current, "now");
       return;
     }
 
@@ -1462,13 +1591,12 @@ export function AnnotationCanvas({
     const gain = e.evt.ctrlKey ? PINCH_ZOOM_PER_PX : WHEEL_ZOOM_PER_PX;
     const exponent = Math.max(-WHEEL_MAX_EXPONENT, Math.min(WHEEL_MAX_EXPONENT, -pixels * gain * zoomSpeed));
     const factor = Math.exp(exponent);
-    const newScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, scale * factor));
-    if (newScale === scale) return;
-    const mouseX = (ptr.x - stagePos.x) / scale;
-    const mouseY = (ptr.y - stagePos.y) / scale;
-    setScale(newScale);
-    setStagePos({ x: ptr.x - mouseX * newScale, y: ptr.y - mouseY * newScale });
-  }, [scale, stagePos, zoomSpeed]);
+    const current = viewportRef.current;
+    const newScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, current.scale * factor));
+    if (newScale === current.scale) return;
+    const [mouseX, mouseY] = screenToImage(current, ptr.x, ptr.y);
+    applyViewport({ scale: newScale, x: ptr.x - mouseX * newScale, y: ptr.y - mouseY * newScale }, "settled");
+  }, [zoomSpeed, applyViewport]);
 
   /*
    * `readonly` is deliberately not a guard here, and this is a fix rather than a
@@ -1710,10 +1838,8 @@ export function AnnotationCanvas({
    *
    * The panel is a row per annotation, and every one of them is DOM. Given a
    * fresh closure on each render it re-rendered all of those rows on every
-   * wheel tick and every pan mousemove, because `scale` and `stagePos` are
-   * state on this component and a viewport change is a render of it. On a
-   * drawing carrying a hundred and forty marks that was the whole of the lag:
-   * the rows do not read the viewport at all.
+   * hover and every selection change, because those are state on this
+   * component and each is a render of it. The rows read neither.
    */
   const handlePanelSelect = useCallback((id: string, additive: boolean) => {
     if (additive) {
@@ -1809,6 +1935,43 @@ export function AnnotationCanvas({
   // Render annotations
   // ---------------------------------------------------------------------------
 
+  const handleAnnotationDblClick = useCallback((id: string, e: KonvaEventObject<MouseEvent>) => {
+    if (tool !== "select" || readonly) return;
+    e.cancelBubble = true;
+    setSelectedIds([id]);
+    setRelabelId(id);
+  }, [tool, readonly, setSelectedIds]);
+
+  /*
+   * One handler set per annotation, held for the life of the shape.
+   *
+   * react-konva rebinds an event whenever the prop's identity changes, and a
+   * closure written inline in the render is new every time. With five events
+   * on every shape, a render of this component was five unbinds and five binds
+   * per mark, thousands of calls on a busy sheet, before a pixel moved. The
+   * handlers here close over the annotation id and dispatch through a ref to
+   * whatever the current callbacks are, so their identity never changes and
+   * a shape whose props are otherwise unchanged costs nothing to reconcile.
+   */
+  const annotationEvents = useRef({ click: handleAnnotationClick, mouseDown: handleAnnotationMouseDown, dblClick: handleAnnotationDblClick });
+  useLayoutEffect(() => {
+    annotationEvents.current = { click: handleAnnotationClick, mouseDown: handleAnnotationMouseDown, dblClick: handleAnnotationDblClick };
+  });
+
+  const handlersFor = useCallback((id: string): AnnotationHandlers => {
+    const cached = annotationHandlers.current.get(id);
+    if (cached) return cached;
+    const created: AnnotationHandlers = {
+      onClick: (e) => annotationEvents.current.click(id, e),
+      onMouseDown: (e) => annotationEvents.current.mouseDown(id, e),
+      onDblClick: (e) => annotationEvents.current.dblClick(id, e),
+      onMouseEnter: () => setHoveredId(id),
+      onMouseLeave: () => setHoveredId(null),
+    };
+    annotationHandlers.current.set(id, created);
+    return created;
+  }, []);
+
   const renderAnnotation = (ann: CanonicalAnnotation) => {
     const lm = labels.find((l) => l.canonicalClassId === ann.label);
     const color = lm?.color ?? "#ffffff";
@@ -1860,34 +2023,28 @@ export function AnnotationCanvas({
       />
     );
 
-    const handleDblClick = (e: KonvaEventObject<MouseEvent>) => {
-      if (tool !== "select" || readonly) return;
-      e.cancelBubble = true;
-      setSelectedIds([ann.id]);
-      setRelabelId(ann.id);
-    };
-
     // Selected shapes get a glow ring behind the stroke so multi-selection is
     // clearly distinguishable from unselected/hovered shapes (which never glow).
-    const selectionGlow = isSelected
+    // `blur` is in the units of the node it lands on: image pixels for a shape
+    // drawn in image space, screen pixels inside a `ScreenSpace` group.
+    const selectionGlow = (blur: number) => isSelected
       ? {
         shadowColor: resolved.accent,
-        shadowBlur: 16 / scale,
+        shadowBlur: blur,
         shadowOpacity: 1,
         shadowOffset: { x: 0, y: 0 },
       }
       : {};
 
+    // Strokes are screen pixels wide at any zoom without dividing by the
+    // scale, so nothing here changes when the viewport does.
     const commonProps = {
       stroke: color,
-      strokeWidth: strokeWidth / scale,
+      strokeWidth,
+      strokeScaleEnabled: false,
       opacity,
-      ...selectionGlow,
-      onClick: (e: KonvaEventObject<MouseEvent>) => handleAnnotationClick(ann.id, e),
-      onMouseDown: (e: KonvaEventObject<MouseEvent>) => handleAnnotationMouseDown(ann.id, e),
-      onDblClick: handleDblClick,
-      onMouseEnter: () => setHoveredId(ann.id),
-      onMouseLeave: () => setHoveredId(null),
+      ...selectionGlow(SELECTION_GLOW_PX / scale),
+      ...handlersFor(ann.id),
     };
 
     // "always" mode should show the annotation overlay like previous labels did,
@@ -1902,16 +2059,20 @@ export function AnnotationCanvas({
     const showChip = labelDisplayMode === "chip" && shouldShowOverlay;
     const showDetailCard = labelDisplayMode === "card" && shouldShowOverlay;
 
+    // The anchor is in image pixels and the offset from it in screen pixels.
     let chipX = 0, chipY = 0;
+    let chipOffset = { dx: 0, dy: 0 };
     if (ann.type === "bbox" || ann.type === "circle") {
       chipX = Math.min(ann.points[0]![0], ann.points[1]![0]);
-      chipY = Math.min(ann.points[0]![1], ann.points[1]![1]) - 16 / scale;
+      chipY = Math.min(ann.points[0]![1], ann.points[1]![1]);
+      chipOffset = BBOX_CHIP_OFFSET;
     } else if (ann.type === "polygon" || ann.type === "polyline" || ann.type === "line") {
       const c = centroid(ann.points);
       chipX = c[0]; chipY = c[1];
     } else if (ann.type === "point") {
-      chipX = ann.points[0]![0] + 10 / scale;
-      chipY = ann.points[0]![1] - 8 / scale;
+      chipX = ann.points[0]![0];
+      chipY = ann.points[0]![1];
+      chipOffset = POINT_CHIP_OFFSET;
     }
 
     const chipLabel = lm?.displayName ?? ann.label;
@@ -1923,7 +2084,7 @@ export function AnnotationCanvas({
     const chipText = chipLabel + chipConf + chipSymbolSize + chipDim;
 
     const overlay = showChip ? (
-      <AnnotationChip x={chipX} y={chipY} scale={scale} text={chipText} theme={resolved} />
+      <AnnotationChip x={chipX} y={chipY} dx={chipOffset.dx} dy={chipOffset.dy} scale={scale} text={chipText} theme={resolved} />
     ) : showDetailCard ? (
       <AnnotationCard
         ann={ann}
@@ -1957,8 +2118,9 @@ export function AnnotationCanvas({
             // midpoints, which aren't real vertices and can't be deleted.
             const cornerIdx = i % 2 === 0 ? i / 2 : -1;
             return (
-              <Circle key={i} x={handle.pos[0]} y={handle.pos[1]}
-                radius={HANDLE_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={2 / scale}
+              <ScreenSpace key={i} x={handle.pos[0]} y={handle.pos[1]} scale={scale}>
+                <Circle
+                  radius={HANDLE_RADIUS} fill={resolved.handleFill} stroke={color} strokeWidth={2}
                 onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
                   e.cancelBubble = true;
                   if (e.evt.altKey && cornerIdx >= 0) { e.evt.preventDefault(); deleteBboxCorner(ann, cornerIdx); return; }
@@ -1970,6 +2132,7 @@ export function AnnotationCanvas({
                   if (cornerIdx >= 0) deleteBboxCorner(ann, cornerIdx);
                 }}
               />
+              </ScreenSpace>
             );
           })}
           {overlay}
@@ -1994,14 +2157,16 @@ export function AnnotationCanvas({
           {showHandles && ([
             [cx, cy - r], [cx + r, cy], [cx, cy + r], [cx - r, cy],
           ] as [number, number][]).map(([hx, hy], i) => (
-            <Circle key={i} x={hx} y={hy}
-              radius={HANDLE_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={2 / scale}
+            <ScreenSpace key={i} x={hx} y={hy} scale={scale}>
+              <Circle
+                radius={HANDLE_RADIUS} fill={resolved.handleFill} stroke={color} strokeWidth={2}
               onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
                 e.cancelBubble = true;
                 snapshot();
                 setDraggingHandle({ annId: ann.id, handleIdx: i, startImg: getImagePos(e) });
               }}
             />
+            </ScreenSpace>
           ))}
           {overlay}
         </Group>
@@ -2014,13 +2179,15 @@ export function AnnotationCanvas({
           <Group key={ann.id}>
             {renderCompoundArea(commonProps)}
             {showHandles && rings[0]?.map(([x, y], i) => (
-              <Circle key={i} x={x} y={y} radius={VERTEX_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={1.5 / scale}
+              <ScreenSpace key={i} x={x} y={y} scale={scale}>
+                <Circle radius={VERTEX_RADIUS} fill={resolved.handleFill} stroke={color} strokeWidth={1.5}
                 onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
                   e.cancelBubble = true;
                   snapshot();
                   setDraggingVertex({ annId: ann.id, vertIdx: i, startImg: getImagePos(e) });
                 }}
               />
+              </ScreenSpace>
             ))}
             {overlay}
           </Group>
@@ -2031,7 +2198,8 @@ export function AnnotationCanvas({
           <Line points={ann.points.flatMap(([x, y]) => [x, y])} closed fill={hexToRgba(color, fillAlpha)} fillEnabled={!isHollowFill} {...commonProps} />
           {showHandles && renderEdgeSplitHandles(ann, color, true)}
           {showHandles && ann.points.map(([x, y], i) => (
-            <Circle key={i} x={x} y={y} radius={VERTEX_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={1.5 / scale}
+            <ScreenSpace key={i} x={x} y={y} scale={scale}>
+              <Circle radius={VERTEX_RADIUS} fill={resolved.handleFill} stroke={color} strokeWidth={1.5}
               onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
                 e.cancelBubble = true;
                 if (e.evt.altKey) { e.evt.preventDefault(); deleteVertex(ann, i); return; }
@@ -2043,6 +2211,7 @@ export function AnnotationCanvas({
                 deleteVertex(ann, i);
               }}
             />
+            </ScreenSpace>
           ))}
           {overlay}
         </Group>
@@ -2052,10 +2221,11 @@ export function AnnotationCanvas({
     if (ann.type === "line" || ann.type === "polyline") {
       return (
         <Group key={ann.id}>
-          <Line points={ann.points.flatMap(([x, y]) => [x, y])} hitStrokeWidth={10 / scale} {...commonProps} />
+          <Line points={ann.points.flatMap(([x, y]) => [x, y])} hitStrokeWidth={10} {...commonProps} />
           {showHandles && renderEdgeSplitHandles(ann, color, false)}
           {showHandles && ann.points.map(([x, y], i) => (
-            <Circle key={i} x={x} y={y} radius={HANDLE_RADIUS / scale} fill={resolved.handleFill} stroke={color} strokeWidth={2 / scale}
+            <ScreenSpace key={i} x={x} y={y} scale={scale}>
+              <Circle radius={HANDLE_RADIUS} fill={resolved.handleFill} stroke={color} strokeWidth={2}
               onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
                 e.cancelBubble = true;
                 if (e.evt.altKey) { e.evt.preventDefault(); deleteVertex(ann, i); return; }
@@ -2067,6 +2237,7 @@ export function AnnotationCanvas({
                 deleteVertex(ann, i);
               }}
             />
+            </ScreenSpace>
           ))}
           {overlay}
         </Group>
@@ -2077,13 +2248,9 @@ export function AnnotationCanvas({
       const [x, y] = ann.points[0]!;
       return (
         <Group key={ann.id}>
-          <Circle x={x} y={y} radius={8 / scale} fill={color} stroke={isSelected ? resolved.accent : resolved.handleFill} strokeWidth={2 / scale} opacity={opacity} {...selectionGlow}
-            onClick={(e: KonvaEventObject<MouseEvent>) => handleAnnotationClick(ann.id, e)}
-            onMouseDown={(e: KonvaEventObject<MouseEvent>) => handleAnnotationMouseDown(ann.id, e)}
-            onDblClick={handleDblClick}
-            onMouseEnter={() => setHoveredId(ann.id)}
-            onMouseLeave={() => setHoveredId(null)}
-          />
+          <ScreenSpace x={x} y={y} scale={scale}>
+            <Circle radius={POINT_RADIUS} fill={color} stroke={isSelected ? resolved.accent : resolved.handleFill} strokeWidth={2} opacity={opacity} {...selectionGlow(SELECTION_GLOW_PX)} {...handlersFor(ann.id)} />
+          </ScreenSpace>
           {overlay}
         </Group>
       );
@@ -2096,6 +2263,29 @@ export function AnnotationCanvas({
   // In-progress drawing overlays
   // ---------------------------------------------------------------------------
 
+  const renderDrawVertex = (x: number, y: number, key: number) => (
+    <ScreenSpace key={key} x={x} y={y} scale={scale} listening={false}>
+      <Circle radius={DRAW_VERTEX_RADIUS} fill={resolved.handleFill} stroke={resolved.accent} strokeWidth={1} />
+    </ScreenSpace>
+  );
+
+  /** The instruction that follows the pointer while a multi-point shape is drawn. */
+  const renderDrawHint = (at: [number, number], text: string) => (
+    <ScreenSpace x={at[0]} y={at[1]} scale={scale} listening={false}>
+      <Group x={HINT_OFFSET} y={HINT_OFFSET}>
+        <Rect
+          width={text.length * HINT_CHAR_WIDTH + HINT_PADDING}
+          height={HINT_HEIGHT}
+          fill={hexToRgba(resolved.bgElevated, 0.9)}
+          stroke={hexToRgba(resolved.accent, 0.45)}
+          strokeWidth={1}
+          cornerRadius={4}
+        />
+        <Text x={6} y={3} text={text} fontSize={11} fill={resolved.textPrimary} fontFamily="system-ui" />
+      </Group>
+    </ScreenSpace>
+  );
+
   const renderDraw = () => {
     if (marquee) {
       const { x, y, w, h } = bboxToKonva([marquee.start, marquee.cur]);
@@ -2103,9 +2293,10 @@ export function AnnotationCanvas({
         <Rect
           x={x} y={y} width={w} height={h}
           stroke={resolved.accent}
-          strokeWidth={1.5 / scale}
+          strokeWidth={1.5}
+          strokeScaleEnabled={false}
           fill={resolved.selection}
-          dash={[4 / scale, 4 / scale]}
+          dash={DRAW_DASH}
           listening={false}
         />
       );
@@ -2113,7 +2304,7 @@ export function AnnotationCanvas({
 
     if (draw.phase === "bbox-drawing") {
       const { x, y, w, h } = bboxToKonva([draw.start, draw.cur]);
-      return <Rect x={x} y={y} width={w} height={h} stroke={resolved.accent} strokeWidth={1.5 / scale} fill={hexToRgba(resolved.accent, 0.1)} dash={[4 / scale, 4 / scale]} />;
+      return <Rect x={x} y={y} width={w} height={h} stroke={resolved.accent} strokeWidth={1.5} strokeScaleEnabled={false} fill={hexToRgba(resolved.accent, 0.1)} dash={DRAW_DASH} />;
     }
 
     if (draw.phase === "polygon-drawing" && draw.pts.length > 0) {
@@ -2124,10 +2315,14 @@ export function AnnotationCanvas({
       const nearFirst = draw.pts.length >= 3 && (dx * dx + dy * dy) * scale * scale < CLOSE_DIST * CLOSE_DIST;
       return (
         <Group>
-          {draw.pts.length > 1 && <Line points={flat} stroke={resolved.accent} strokeWidth={1.5 / scale} />}
-          <Line points={[lastPt[0], lastPt[1], draw.cur[0], draw.cur[1]]} stroke={resolved.accent} strokeWidth={1.5 / scale} dash={[4 / scale, 4 / scale]} />
-          {draw.pts.map(([x, y], i) => <Circle key={i} x={x} y={y} radius={4 / scale} fill={resolved.handleFill} stroke={resolved.accent} strokeWidth={1 / scale} />)}
-          {nearFirst && <Circle x={firstPt[0]} y={firstPt[1]} radius={6 / scale} fill={resolved.success} opacity={0.7} />}
+          {draw.pts.length > 1 && <Line points={flat} stroke={resolved.accent} strokeWidth={1.5} strokeScaleEnabled={false} />}
+          <Line points={[lastPt[0], lastPt[1], draw.cur[0], draw.cur[1]]} stroke={resolved.accent} strokeWidth={1.5} strokeScaleEnabled={false} dash={DRAW_DASH} />
+          {draw.pts.map(([x, y], i) => renderDrawVertex(x, y, i))}
+          {nearFirst && (
+            <ScreenSpace x={firstPt[0]} y={firstPt[1]} scale={scale} listening={false}>
+              <Circle radius={DRAW_CLOSE_RADIUS} fill={resolved.success} opacity={0.7} />
+            </ScreenSpace>
+          )}
         </Group>
       );
     }
@@ -2140,29 +2335,18 @@ export function AnnotationCanvas({
           polylineFinishAction === "double-click" ? "Double-click" :
             "Enter";
       const hint = draw.pts.length >= 2 ? `${finishLabel} to finish · Esc to cancel` : "Click to add points · Esc to cancel";
-      const hintWidth = hint.length * 7 / scale + 12 / scale;
       return (
         <Group>
-          {draw.pts.length > 1 && <Line points={flat} stroke={resolved.accent} strokeWidth={1.5 / scale} />}
-          <Line points={[lastPt[0], lastPt[1], draw.cur[0], draw.cur[1]]} stroke={resolved.accent} strokeWidth={1.5 / scale} dash={[4 / scale, 4 / scale]} />
-          {draw.pts.map(([x, y], i) => <Circle key={i} x={x} y={y} radius={4 / scale} fill={resolved.handleFill} stroke={resolved.accent} strokeWidth={1 / scale} />)}
-          <Group x={draw.cur[0] + 10 / scale} y={draw.cur[1] + 10 / scale}>
-            <Rect
-              width={hintWidth}
-              height={18 / scale}
-              fill={hexToRgba(resolved.bgElevated, 0.9)}
-              stroke={hexToRgba(resolved.accent, 0.45)}
-              strokeWidth={1 / scale}
-              cornerRadius={4 / scale}
-            />
-            <Text x={6 / scale} y={3 / scale} text={hint} fontSize={11 / scale} fill={resolved.textPrimary} fontFamily="system-ui" />
-          </Group>
+          {draw.pts.length > 1 && <Line points={flat} stroke={resolved.accent} strokeWidth={1.5} strokeScaleEnabled={false} />}
+          <Line points={[lastPt[0], lastPt[1], draw.cur[0], draw.cur[1]]} stroke={resolved.accent} strokeWidth={1.5} strokeScaleEnabled={false} dash={DRAW_DASH} />
+          {draw.pts.map(([x, y], i) => renderDrawVertex(x, y, i))}
+          {renderDrawHint(draw.cur, hint)}
         </Group>
       );
     }
 
     if (draw.phase === "line-drawing") {
-      return <Line points={[draw.start[0], draw.start[1], draw.cur[0], draw.cur[1]]} stroke={resolved.accent} strokeWidth={1.5 / scale} dash={[4 / scale, 4 / scale]} />;
+      return <Line points={[draw.start[0], draw.start[1], draw.cur[0], draw.cur[1]]} stroke={resolved.accent} strokeWidth={1.5} strokeScaleEnabled={false} dash={DRAW_DASH} />;
     }
 
     if (draw.phase === "circle-drawing") {
@@ -2170,8 +2354,10 @@ export function AnnotationCanvas({
       return (
         <Group>
           <Ellipse x={draw.center[0]} y={draw.center[1]} radiusX={r} radiusY={r}
-            stroke={resolved.accent} strokeWidth={1.5 / scale} fill={hexToRgba(resolved.accent, 0.1)} dash={[4 / scale, 4 / scale]} />
-          <Circle x={draw.center[0]} y={draw.center[1]} radius={3 / scale} fill={resolved.accent} />
+            stroke={resolved.accent} strokeWidth={1.5} strokeScaleEnabled={false} fill={hexToRgba(resolved.accent, 0.1)} dash={DRAW_DASH} />
+          <ScreenSpace x={draw.center[0]} y={draw.center[1]} scale={scale} listening={false}>
+            <Circle radius={DRAW_CENTRE_RADIUS} fill={resolved.accent} />
+          </ScreenSpace>
         </Group>
       );
     }
@@ -2182,16 +2368,14 @@ export function AnnotationCanvas({
           countFinishAction === "double-click" ? "Double-click" :
             "Enter";
       const countText = `${draw.pts.length} pt${draw.pts.length !== 1 ? "s" : ""} · ${finishLabel} to finish · Esc to cancel`;
-      const hintWidth = countText.length * 7 / scale + 12 / scale;
       return (
         <Group>
           {draw.pts.map(([x, y], i) => (
-            <Circle key={i} x={x} y={y} radius={8 / scale} fill={resolved.accent} stroke={resolved.handleFill} strokeWidth={2 / scale} opacity={0.85} />
+            <ScreenSpace key={i} x={x} y={y} scale={scale} listening={false}>
+              <Circle radius={POINT_RADIUS} fill={resolved.accent} stroke={resolved.handleFill} strokeWidth={2} opacity={0.85} />
+            </ScreenSpace>
           ))}
-          <Group x={draw.cur[0] + 10 / scale} y={draw.cur[1] + 10 / scale}>
-            <Rect width={hintWidth} height={18 / scale} fill={hexToRgba(resolved.bgElevated, 0.9)} stroke={hexToRgba(resolved.accent, 0.45)} strokeWidth={1 / scale} cornerRadius={4 / scale} />
-            <Text x={6 / scale} y={3 / scale} text={countText} fontSize={11 / scale} fill={resolved.textPrimary} fontFamily="system-ui" />
-          </Group>
+          {renderDrawHint(draw.cur, countText)}
         </Group>
       );
     }
@@ -2409,12 +2593,12 @@ export function AnnotationCanvas({
                 onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-secondary)"; }}>
                 <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M1 6V1h5M10 1h5v5M15 10v5h-5M6 15H1v-5" /></svg>
               </button>
-              <button title="Zoom out (Ctrl+-)" onClick={() => setScale((s) => Math.max(s / 1.2, MIN_ZOOM))} style={zoomBtnStyle}
+              <button title="Zoom out (Ctrl+-)" onClick={() => zoomBy(1 / KEY_ZOOM_STEP)} style={zoomBtnStyle}
                 onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--ae-bg-elevated)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-primary)"; }}
                 onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-secondary)"; }}>
                 <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="7" cy="7" r="5" /><line x1="10.5" y1="10.5" x2="14" y2="14" /><line x1="4.5" y1="7" x2="9.5" y2="7" /></svg>
               </button>
-              <button title="Zoom in (Ctrl+=)" onClick={() => setScale((s) => Math.min(s * 1.2, MAX_ZOOM))} style={zoomBtnStyle}
+              <button title="Zoom in (Ctrl+=)" onClick={() => zoomBy(KEY_ZOOM_STEP)} style={zoomBtnStyle}
                 onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--ae-bg-elevated)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-primary)"; }}
                 onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--ae-text-secondary)"; }}>
                 <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="7" cy="7" r="5" /><line x1="10.5" y1="10.5" x2="14" y2="14" /><line x1="7" y1="4.5" x2="7" y2="9.5" /><line x1="4.5" y1="7" x2="9.5" y2="7" /></svg>
@@ -2469,7 +2653,7 @@ export function AnnotationCanvas({
               )}
             </span>
           )}
-          <span style={{ fontFamily: "'JetBrains Mono','Fira Code',monospace" }}>x: {Math.round(cursorImg[0])} y: {Math.round(cursorImg[1])}</span>
+          <CursorReadout cursor={cursor} />
           {showFullscreen && (
             <button
               title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}

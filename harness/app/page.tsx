@@ -20,6 +20,7 @@ import engineA from "../fixtures/engine-a.json";
 import engineB from "../fixtures/engine-b.json";
 import engineC from "../fixtures/engine-c.json";
 import engineD from "../fixtures/engine-d.json";
+import { stressAnnotations } from "../fixtures/stress";
 
 const AnnotationCanvas = dynamic(
   () =>
@@ -67,7 +68,7 @@ const SCALE_PRESETS: { label: string; scale: DrawingScale; dpi: number }[] = [
     scale: { value: 48, unit: "in", label: '1/4"=1\'', paper: { amount: "1/4", unit: "in" }, real: { amount: "1", unit: "ft", inches: "0" } }, dpi: 300 },
 ];
 
-type Engine = "A" | "B" | "C" | "D";
+type Engine = "A" | "B" | "C" | "D" | "Stress";
 
 function getAnnotations(engine: Engine): CanonicalAnnotation[] {
   switch (engine) {
@@ -79,6 +80,8 @@ function getAnnotations(engine: Engine): CanonicalAnnotation[] {
       return adaptEngineC(engineC as Parameters<typeof adaptEngineC>[0]);
     case "D":
       return adaptEngineD(engineD as Parameters<typeof adaptEngineD>[0]);
+    case "Stress":
+      return stressAnnotations();
   }
 }
 
@@ -227,7 +230,7 @@ export default function Page() {
           Engine fixture:
         </span>
 
-        {(["A", "B", "C", "D"] as Engine[]).map((e) => (
+        {(["A", "B", "C", "D", "Stress"] as Engine[]).map((e) => (
           <button
             key={e}
             onClick={() => setEngine(e)}
