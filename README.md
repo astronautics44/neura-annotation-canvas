@@ -162,7 +162,7 @@ interface AnnotationCanvasProps {
   annotations?: CanonicalAnnotation[]; // pre-adapted engine output; seeds state, see note below
   onSave: (annotations: CanonicalAnnotation[]) => void;
   onChange?: (annotations: CanonicalAnnotation[]) => void; // fires on every mutation
-  onLabelsChange?: (labels: LabelMap[]) => void; // fires when user creates a new label; wiring it is what makes "Create" appear
+  onLabelsChange?: (labels: LabelMap[]) => void; // fires when user creates a new label
 
   // Tools
   tools?: ToolType[]; // subset to expose; default: all ["select","bbox","polygon","line","point","circle"]
@@ -1231,7 +1231,7 @@ All state lives inside `AnnotationCanvas`. No external store required.
 
 - `onSave` fires only when the user explicitly saves (`Ctrl+S` or a Save button you add externally)
 - `onChange` fires after every mutation (add, update, delete, move)
-- `onLabelsChange` fires when the user creates a new label via the popover, and its presence is what enables creating one: omit it and the popovers pick from `labels` only
+- `onLabelsChange` fires when the user creates a new label via the popover
 
 Undo/redo history is kept in-memory (up to 100 steps). It resets when the `annotations` prop changes (e.g. when switching fixtures). The toolbar undo/redo buttons are automatically enabled/disabled based on history availability.
 

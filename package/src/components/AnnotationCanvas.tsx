@@ -42,7 +42,7 @@ import {
 } from "../utils/booleanOps";
 import {
   MIN_ZOOM, MAX_ZOOM, HANDLE_RADIUS, VERTEX_RADIUS, CLOSE_DIST,
-  WHEEL_ZOOM_PER_PX, WHEEL_MAX_PX, WHEEL_LINE_PX, WHEEL_PAGE_PX,
+  WHEEL_ZOOM_PER_PX, PINCH_ZOOM_PER_PX, WHEEL_MAX_EXPONENT, WHEEL_LINE_PX, WHEEL_PAGE_PX,
   AUTO_COLORS, zoomBtnStyle,
   type DrawState, type Action,
 } from "./canvasConstants";
@@ -70,13 +70,11 @@ interface Props {
    * Fires with the full label registry whenever the user creates a class from
    * a label popover or the annotations panel.
    *
-   * **Wiring this is what makes "Create <name>" appear.** A class minted on the
-   * canvas exists only in the canvas's own state, under an id it invented, and
-   * this callback is the only way it can leave. A consumer that does not listen
-   * cannot persist the class, cannot recognise the marks filed under it, and
-   * loses both the moment `labels` is re-seeded — so the affordance is not
-   * offered at all until there is somewhere for its output to go. Omit it and
-   * the popovers pick from `labels` and nothing else.
+   * **A consumer that lets the user create classes must listen here.** The
+   * class lives in the canvas's own state under an id the canvas invented, and
+   * this callback is the only way it leaves: a consumer that ignores it cannot
+   * persist the class or the marks filed under it, and the next `labels` prop
+   * re-seeds the registry without it.
    */
   onLabelsChange?: (labels: LabelMap[]) => void;
 
@@ -255,10 +253,9 @@ interface Props {
   /** Fires when the user edits the scale in the status bar. */
   onDrawingScaleChange?: (scale: DrawingScale) => void;
   /**
-   * How far one wheel gesture zooms. `1` keeps a mouse notch at the ×1.1 step
-   * it has always been; a trackpad's smaller deltas scale down with it, so a
-   * pinch is continuous rather than stepped. `0.5` halves the whole curve,
-   * `2` doubles it. Default: 1
+   * How far one wheel gesture zooms. At `1` a mouse notch is about ×1.22 and a
+   * short trackpad pinch about ×2.7, each on its own gain so both feel right.
+   * `0.5` halves the whole curve, `2` doubles it. Default: 1
    */
   zoomSpeed?: number;
 
@@ -1455,11 +1452,16 @@ export function AnnotationCanvas({
      * so zooming read as a staircase. Scaling by the delta makes a small
      * movement a small change and a notch the same step it always was, and
      * `deltaMode` is honoured so a browser reporting lines or pages rather than
-     * pixels gets the same feel. `zoomSpeed` tunes the whole curve.
+     * pixels gets the same feel, and a pinch gets its own gain. `zoomSpeed`
+     * tunes the whole curve.
      */
     const pixels = e.evt.deltaY * (e.evt.deltaMode === 1 ? WHEEL_LINE_PX : e.evt.deltaMode === 2 ? WHEEL_PAGE_PX : 1);
-    const clamped = Math.max(-WHEEL_MAX_PX, Math.min(WHEEL_MAX_PX, pixels));
-    const factor = Math.exp(-clamped * WHEEL_ZOOM_PER_PX * zoomSpeed);
+    // A pinch arrives as a wheel event with ctrlKey, in small deltas; a notch
+    // does not. They get different gains, or one of them is wrong. See the
+    // constants for the calibration.
+    const gain = e.evt.ctrlKey ? PINCH_ZOOM_PER_PX : WHEEL_ZOOM_PER_PX;
+    const exponent = Math.max(-WHEEL_MAX_EXPONENT, Math.min(WHEEL_MAX_EXPONENT, -pixels * gain * zoomSpeed));
+    const factor = Math.exp(exponent);
     const newScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, scale * factor));
     if (newScale === scale) return;
     const mouseX = (ptr.x - stagePos.x) / scale;
@@ -1701,17 +1703,7 @@ export function AnnotationCanvas({
     return id;
   }, [labels, onLabelsChange]);
 
-  /*
-   * "Create <name>" is offered only where its result can go somewhere.
-   *
-   * The class it mints lives in this component's state under an id this
-   * component invented, and `onLabelsChange` is the only channel out. Without a
-   * listener the consumer never learns the class exists, cannot save the marks
-   * filed under it, and the next `labels` prop wipes it — the marks then fall to
-   * "Unknown label" with their work gone. Nothing about that is recoverable
-   * from the consumer's side, so the affordance stays off until it is wired.
-   */
-  const createLabel = !readonly && onLabelsChange !== undefined ? handleCreateLabel : undefined;
+  const createLabel = readonly ? undefined : handleCreateLabel;
 
   /*
    * The annotations panel's handlers, held stable so the panel can be memoised.
