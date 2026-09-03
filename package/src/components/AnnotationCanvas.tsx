@@ -11,7 +11,7 @@ import React, {
 } from "react";
 import type { KonvaEventObject } from "konva/lib/Node";
 import type { Stage as StageType } from "konva/lib/Stage";
-import { Stage, Layer, Image as KonvaImage, Rect, Line, Circle, Ellipse, Group, Text, Shape } from "react-konva";
+import { Stage, Layer, Image as KonvaImage, Rect, Line, Circle, Ellipse, Group, Text } from "react-konva";
 import useImage from "use-image";
 import type { CanonicalAnnotation, LabelMap, SymbolSize, ToolType } from "../types/canonical";
 import type { CommentAnchor, CommentDraft, CommentTarget, CommentUndoOp } from "../types/comments";
@@ -32,6 +32,7 @@ import { AnnotationCard } from "./AnnotationCard";
 import { CommentMarkers } from "./CommentMarkers";
 import { CommentComposer } from "./CommentComposer";
 import { ScreenSpace } from "./ScreenSpace";
+import { AnnotationShape, type AnnotationHandlers, type ShapeOps } from "./AnnotationShape";
 import { CursorReadout } from "./CursorReadout";
 import { createValueStore } from "./valueStore";
 import {
@@ -39,7 +40,6 @@ import {
   type Viewport,
 } from "./viewport";
 import {
-  getAnnotationRings,
   hollowAnnotations,
   intersectAnnotations,
   isAreaAnnotation,
@@ -49,22 +49,20 @@ import {
   type ShapeMeta,
 } from "../utils/booleanOps";
 import {
-  MIN_ZOOM, MAX_ZOOM, HANDLE_RADIUS, VERTEX_RADIUS, POINT_RADIUS, CLOSE_DIST, KEY_ZOOM_STEP,
+  MIN_ZOOM, MAX_ZOOM, CLOSE_DIST, KEY_ZOOM_STEP,
   WHEEL_ZOOM_PER_PX, PINCH_ZOOM_PER_PX, WHEEL_MAX_EXPONENT, WHEEL_LINE_PX, WHEEL_PAGE_PX,
   AUTO_COLORS, zoomBtnStyle,
   type DrawState, type Action,
 } from "./canvasConstants";
 import {
-  hexToRgba, bboxToKonva, centroid, nearestPointOnSegment,
-  bboxHandles, slugify, annotationReducer, getAnnotationBounds, boxesIntersect,
+  hexToRgba, bboxToKonva, centroid, bboxHandles,
+  slugify, annotationReducer, getAnnotationBounds, boxesIntersect,
 } from "./canvasHelpers";
 
 export type { DrawingScale } from "../utils/drawingScale";
 
-/** Where a label chip sits relative to its mark, in screen pixels. */
-const BBOX_CHIP_OFFSET = { dx: 0, dy: -16 };
-const POINT_CHIP_OFFSET = { dx: 10, dy: -8 };
-const SELECTION_GLOW_PX = 16;
+/** Fallback when a mark names a class the label map does not carry. */
+const DEFAULT_SHAPE_COLOR = "#ffffff";
 /** In-progress drawing overlay, in screen pixels. */
 const DRAW_DASH = [4, 4];
 const DRAW_VERTEX_RADIUS = 4;
@@ -74,14 +72,7 @@ const HINT_OFFSET = 10;
 const HINT_HEIGHT = 18;
 const HINT_CHAR_WIDTH = 7;
 const HINT_PADDING = 12;
-
-interface AnnotationHandlers {
-  onClick: (e: KonvaEventObject<MouseEvent>) => void;
-  onMouseDown: (e: KonvaEventObject<MouseEvent>) => void;
-  onDblClick: (e: KonvaEventObject<MouseEvent>) => void;
-  onMouseEnter: () => void;
-  onMouseLeave: () => void;
-}
+const DRAW_POINT_RADIUS = 8;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1272,69 +1263,6 @@ export function AnnotationCanvas({
     dispatchAndNotify({ type: "UPDATE", payload: updated });
   }, [readonly, dispatchAndNotify]);
 
-  /**
-   * Edge-split handles for a selected line/polyline/polygon, honoring `edgeSplitMode`.
-   * `closed` wraps the last segment back to the first point (polygons).
-   */
-  const renderEdgeSplitHandles = useCallback((ann: CanonicalAnnotation, color: string, closed: boolean) => {
-    const pts = ann.points;
-    const segCount = closed ? pts.length : pts.length - 1;
-    const segments = Array.from({ length: segCount }, (_, i) => [pts[i]!, pts[(i + 1) % pts.length]!] as const);
-
-    if (edgeSplitMode === "anyPoint") {
-      return segments.map(([[x1, y1], [x2, y2]], i) => (
-        <Group key={`edge-${i}`}>
-          <Line
-            points={[x1, y1, x2, y2]}
-            stroke="transparent"
-            strokeWidth={1}
-            hitStrokeWidth={12}
-            strokeScaleEnabled={false}
-            onMouseMove={(e: KonvaEventObject<MouseEvent>) => {
-              e.cancelBubble = true;
-              const p = nearestPointOnSegment(getImagePos(e), [x1, y1], [x2, y2]);
-              setEdgeHover({ annId: ann.id, segIdx: i, pos: p });
-            }}
-            onMouseLeave={() => setEdgeHover((cur) => (cur?.annId === ann.id && cur.segIdx === i ? null : cur))}
-            onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
-              e.cancelBubble = true;
-              const p = nearestPointOnSegment(getImagePos(e), [x1, y1], [x2, y2]);
-              splitEdgeAt(ann, i, p);
-            }}
-          />
-          {edgeHover?.annId === ann.id && edgeHover.segIdx === i && (
-            <ScreenSpace x={edgeHover.pos[0]} y={edgeHover.pos[1]} scale={scale} listening={false}>
-              <Circle
-                radius={HANDLE_RADIUS * 0.65}
-                fill={resolved.accent} stroke={resolved.handleFill} strokeWidth={1.5}
-                opacity={0.85}
-              />
-            </ScreenSpace>
-          )}
-        </Group>
-      ));
-    }
-
-    return segments.map(([[x1, y1], [x2, y2]], i) => {
-      const mx = (x1 + x2) / 2;
-      const my = (y1 + y2) / 2;
-      return (
-        <ScreenSpace key={`mid-${i}`} x={mx} y={my} scale={scale}>
-          <Circle
-            radius={HANDLE_RADIUS * 0.65}
-            fill={resolved.accent}
-            stroke={resolved.handleFill}
-            strokeWidth={1.5}
-            opacity={0.85}
-            onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
-              e.cancelBubble = true;
-              splitEdgeAt(ann, i, [mx, my]);
-            }}
-          />
-        </ScreenSpace>
-      );
-    });
-  }, [edgeSplitMode, scale, resolved, getImagePos, edgeHover, splitEdgeAt]);
 
   const panStart = useRef<{ x: number; y: number; stageX: number; stageY: number } | null>(null);
 
@@ -1611,6 +1539,8 @@ export function AnnotationCanvas({
    * `handleAnnotationMouseDown` and `onDeleteSelected`, because those do mutate.
    */
   const handleAnnotationClick = useCallback((id: string, e: KonvaEventObject<MouseEvent>) => {
+    // The middle button is the pan gesture, never a selection.
+    if (e.evt.button !== 0) return;
     if (tool === "comment" && !panMode) {
       e.cancelBubble = true;
       const target = annotationsRef.current.find((a) => a.id === id);
@@ -1634,6 +1564,11 @@ export function AnnotationCanvas({
   }, [tool, panMode, selectedIds, setSelectedIds, beginComment]);
 
   const handleAnnotationMouseDown = useCallback((id: string, e: KonvaEventObject<MouseEvent>) => {
+    // A pan that starts over a mark is still a pan. Without this the shape
+    // swallowed the press and dragged itself instead, so space-dragging or
+    // middle-dragging across a busy sheet moved a mark rather than the sheet,
+    // and the denser the drawing the harder that was to avoid.
+    if (shouldPan(e)) return;
     if (tool !== "select" || readonly || panMode) return;
     e.cancelBubble = true;
 
@@ -1661,7 +1596,7 @@ export function AnnotationCanvas({
     // Snapshot once here — drag moves use raw dispatch so no per-frame cloning
     snapshot();
     setDraggingAnnotation({ id, startImg: getImagePos(e) });
-  }, [tool, readonly, panMode, getImagePos, selectedIds, cloneAnnotations, snapshot]);
+  }, [tool, readonly, panMode, shouldPan, getImagePos, selectedIds, cloneAnnotations, snapshot]);
 
   const commitPendingShape = useCallback((
     pendingDraw: DrawState,
@@ -1924,6 +1859,16 @@ export function AnnotationCanvas({
     [annotations, hiddenClasses],
   );
 
+  const labelsById = useMemo(
+    () => new Map(labels.map((l) => [l.canonicalClassId, l])),
+    [labels],
+  );
+
+  const imageBounds = useMemo(
+    () => (img ? { width: img.width, height: img.height } : undefined),
+    [img],
+  );
+
   const stageCursor = isPanning ? "grabbing"
     : panMode ? "grab"
       : spaceDown ? "grab"
@@ -1958,6 +1903,29 @@ export function AnnotationCanvas({
     annotationEvents.current = { click: handleAnnotationClick, mouseDown: handleAnnotationMouseDown, dblClick: handleAnnotationDblClick };
   });
 
+  /*
+   * Everything a shape does to the canvas, as one object built once.
+   *
+   * Each method reads the current implementation through a ref, so the object
+   * a shape holds never changes identity and the memo below it holds across a
+   * render that changed none of that shape's own inputs.
+   */
+  const shapeCallbacks = useRef({ snapshot, getImagePos, splitEdgeAt, deleteVertex, deleteBboxCorner });
+  useLayoutEffect(() => {
+    shapeCallbacks.current = { snapshot, getImagePos, splitEdgeAt, deleteVertex, deleteBboxCorner };
+  });
+
+  const [shapeOps] = useState<ShapeOps>(() => ({
+    snapshot: () => shapeCallbacks.current.snapshot(),
+    imagePosOf: (e) => shapeCallbacks.current.getImagePos(e),
+    beginHandleDrag: (annId, handleIdx, startImg) => setDraggingHandle({ annId, handleIdx, startImg }),
+    beginVertexDrag: (annId, vertIdx, startImg) => setDraggingVertex({ annId, vertIdx, startImg }),
+    splitEdgeAt: (ann, segIdx, pos) => shapeCallbacks.current.splitEdgeAt(ann, segIdx, pos),
+    deleteVertex: (ann, vertIdx) => shapeCallbacks.current.deleteVertex(ann, vertIdx),
+    deleteBboxCorner: (ann, cornerIdx) => shapeCallbacks.current.deleteBboxCorner(ann, cornerIdx),
+    hoverEdge: (hover) => setEdgeHover(hover),
+  }));
+
   const handlersFor = useCallback((id: string): AnnotationHandlers => {
     const cached = annotationHandlers.current.get(id);
     if (cached) return cached;
@@ -1965,7 +1933,9 @@ export function AnnotationCanvas({
       onClick: (e) => annotationEvents.current.click(id, e),
       onMouseDown: (e) => annotationEvents.current.mouseDown(id, e),
       onDblClick: (e) => annotationEvents.current.dblClick(id, e),
-      onMouseEnter: () => setHoveredId(id),
+      // A pan drags the pointer across marks by definition, and a hover
+      // nobody asked for is a render nobody needed.
+      onMouseEnter: () => { if (!panStart.current) setHoveredId(id); },
       onMouseLeave: () => setHoveredId(null),
     };
     annotationHandlers.current.set(id, created);
@@ -1973,290 +1943,32 @@ export function AnnotationCanvas({
   }, []);
 
   const renderAnnotation = (ann: CanonicalAnnotation) => {
-    const lm = labels.find((l) => l.canonicalClassId === ann.label);
-    const color = lm?.color ?? "#ffffff";
+    const lm = labelsById.get(ann.label);
     const isSelected = selectedIds.includes(ann.id);
-    const isHovered = hoveredId === ann.id;
-    const isEngine = ann.source === "engine";
-    // Show resize/vertex handles only when exactly this annotation is selected alone
-    const showHandles = isSelected && selectedIds.length === 1;
-
-    const baseStrokeWidth = isEngine ? 1.5 : 2;
-    // Selection is signalled by the accent glow (selectionGlow) + fill, not by a
-    // thicker stroke — keep the stroke at its base/hover width.
-    const strokeWidth = isHovered ? 2.5 : baseStrokeWidth;
-    const opacity = isEngine ? 0.85 : 1.0;
-    const shapeMeta = ann.meta as ShapeMeta | undefined;
-    const isHollowFill = shapeMeta?.hollow === true;
-    const fillAlpha = isHollowFill ? 0 : isSelected ? 0.18 : isHovered ? 0.15 : isEngine ? 0.08 : 0.12;
-    const rings = getAnnotationRings(ann);
-    const hasHoles = (shapeMeta?.rings?.length ?? 0) > 1;
-
-    const renderCompoundArea = (strokeProps: typeof commonProps) => (
-      <Shape
-        {...strokeProps}
-        fill={hexToRgba(color, fillAlpha)}
-        fillEnabled={!isHollowFill}
-        fillRule="evenodd"
-        sceneFunc={(ctx, shape) => {
-          ctx.beginPath();
-          for (const ring of rings) {
-            ring.forEach(([x, y], i) => {
-              if (i === 0) ctx.moveTo(x, y);
-              else ctx.lineTo(x, y);
-            });
-            ctx.closePath();
-          }
-          ctx.fillStrokeShape(shape);
-        }}
-        hitFunc={(ctx, shape) => {
-          ctx.beginPath();
-          for (const ring of rings) {
-            ring.forEach(([x, y], i) => {
-              if (i === 0) ctx.moveTo(x, y);
-              else ctx.lineTo(x, y);
-            });
-            ctx.closePath();
-          }
-          ctx.fillStrokeShape(shape);
-        }}
-      />
-    );
-
-    // Selected shapes get a glow ring behind the stroke so multi-selection is
-    // clearly distinguishable from unselected/hovered shapes (which never glow).
-    // `blur` is in the units of the node it lands on: image pixels for a shape
-    // drawn in image space, screen pixels inside a `ScreenSpace` group.
-    const selectionGlow = (blur: number) => isSelected
-      ? {
-        shadowColor: resolved.accent,
-        shadowBlur: blur,
-        shadowOpacity: 1,
-        shadowOffset: { x: 0, y: 0 },
-      }
-      : {};
-
-    // Strokes are screen pixels wide at any zoom without dividing by the
-    // scale, so nothing here changes when the viewport does.
-    const commonProps = {
-      stroke: color,
-      strokeWidth,
-      strokeScaleEnabled: false,
-      opacity,
-      ...selectionGlow(SELECTION_GLOW_PX / scale),
-      ...handlersFor(ann.id),
-    };
-
-    // "always" mode should show the annotation overlay like previous labels did,
-    // while selected/hover modes show the overlay only on selected or hovered annotations.
-    const shouldShowOverlay =
-      labelVisibility === "always" ? scale >= 0.3
-        : labelVisibility === "selected" ? isSelected
-          : labelVisibility === "hover" ? isHovered
-            : labelVisibility === "hover+selected" ? isHovered || isSelected
-              : false;
-
-    const showChip = labelDisplayMode === "chip" && shouldShowOverlay;
-    const showDetailCard = labelDisplayMode === "card" && shouldShowOverlay;
-
-    // The anchor is in image pixels and the offset from it in screen pixels.
-    let chipX = 0, chipY = 0;
-    let chipOffset = { dx: 0, dy: 0 };
-    if (ann.type === "bbox" || ann.type === "circle") {
-      chipX = Math.min(ann.points[0]![0], ann.points[1]![0]);
-      chipY = Math.min(ann.points[0]![1], ann.points[1]![1]);
-      chipOffset = BBOX_CHIP_OFFSET;
-    } else if (ann.type === "polygon" || ann.type === "polyline" || ann.type === "line") {
-      const c = centroid(ann.points);
-      chipX = c[0]; chipY = c[1];
-    } else if (ann.type === "point") {
-      chipX = ann.points[0]![0];
-      chipY = ann.points[0]![1];
-      chipOffset = POINT_CHIP_OFFSET;
-    }
-
-    const chipLabel = lm?.displayName ?? ann.label;
-    const symbolSize = parseSymbolSize(ann.meta);
-    const chipConf = ann.confidence !== undefined ? ` ${Math.round(ann.confidence * 100)}%` : "";
-    const chipSymbolSize = symbolSize ? ` ${formatSymbolSize(symbolSize)}` : "";
-    const calculatedSize = formatAnnotationCalculatedSize(ann, dpi, drawingScale);
-    const chipDim = calculatedSize ? ` ${calculatedSize}` : "";
-    const chipText = chipLabel + chipConf + chipSymbolSize + chipDim;
-
-    const overlay = showChip ? (
-      <AnnotationChip x={chipX} y={chipY} dx={chipOffset.dx} dy={chipOffset.dy} scale={scale} text={chipText} theme={resolved} />
-    ) : showDetailCard ? (
-      <AnnotationCard
+    const edgeHovered = edgeHover?.annId === ann.id ? edgeHover : null;
+    return (
+      <AnnotationShape
+        key={ann.id}
         ann={ann}
-        anchorX={chipX}
-        anchorY={chipY}
+        color={lm?.color ?? DEFAULT_SHAPE_COLOR}
+        displayName={lm?.displayName ?? ann.label}
+        isSelected={isSelected}
+        isHovered={hoveredId === ann.id}
+        showHandles={isSelected && selectedIds.length === 1}
         scale={scale}
-        displayName={chipLabel}
         theme={resolved}
+        labelVisibility={labelVisibility}
+        labelDisplayMode={labelDisplayMode}
         dpi={dpi}
         drawingScale={drawingScale}
-        imageBounds={img ? { width: img.width, height: img.height } : undefined}
+        imageBounds={imageBounds}
+        edgeSplitMode={edgeSplitMode}
+        edgeHoverSegIdx={edgeHovered ? edgeHovered.segIdx : null}
+        edgeHoverPos={edgeHovered ? edgeHovered.pos : null}
+        handlers={handlersFor(ann.id)}
+        ops={shapeOps}
       />
-    ) : null;
-
-
-    if (ann.type === "bbox") {
-      const { x, y, w, h } = bboxToKonva(ann.points);
-      if (hasHoles) {
-        return (
-          <Group key={ann.id}>
-            {renderCompoundArea(commonProps)}
-            {overlay}
-          </Group>
-        );
-      }
-      return (
-        <Group key={ann.id}>
-          <Rect x={x} y={y} width={w} height={h} fill={hexToRgba(color, fillAlpha)} fillEnabled={!isHollowFill} {...commonProps} />
-          {showHandles && bboxHandles(x, y, w, h).map((handle, i) => {
-            // Even indices are corners (0=TL,2=TR,4=BR,6=BL); odd are edge
-            // midpoints, which aren't real vertices and can't be deleted.
-            const cornerIdx = i % 2 === 0 ? i / 2 : -1;
-            return (
-              <ScreenSpace key={i} x={handle.pos[0]} y={handle.pos[1]} scale={scale}>
-                <Circle
-                  radius={HANDLE_RADIUS} fill={resolved.handleFill} stroke={color} strokeWidth={2}
-                onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
-                  e.cancelBubble = true;
-                  if (e.evt.altKey && cornerIdx >= 0) { e.evt.preventDefault(); deleteBboxCorner(ann, cornerIdx); return; }
-                  snapshot();
-                  setDraggingHandle({ annId: ann.id, handleIdx: i, startImg: getImagePos(e) });
-                }}
-                onContextMenu={(e: KonvaEventObject<MouseEvent>) => {
-                  e.cancelBubble = true; e.evt.preventDefault();
-                  if (cornerIdx >= 0) deleteBboxCorner(ann, cornerIdx);
-                }}
-              />
-              </ScreenSpace>
-            );
-          })}
-          {overlay}
-        </Group>
-      );
-    }
-
-    if (ann.type === "circle") {
-      const { x, y, w } = bboxToKonva(ann.points);
-      const cx = x + w / 2, cy = y + w / 2, r = w / 2;
-      if (hasHoles) {
-        return (
-          <Group key={ann.id}>
-            {renderCompoundArea(commonProps)}
-            {overlay}
-          </Group>
-        );
-      }
-      return (
-        <Group key={ann.id}>
-          <Ellipse x={cx} y={cy} radiusX={r} radiusY={r} fill={hexToRgba(color, fillAlpha)} fillEnabled={!isHollowFill} {...commonProps} />
-          {showHandles && ([
-            [cx, cy - r], [cx + r, cy], [cx, cy + r], [cx - r, cy],
-          ] as [number, number][]).map(([hx, hy], i) => (
-            <ScreenSpace key={i} x={hx} y={hy} scale={scale}>
-              <Circle
-                radius={HANDLE_RADIUS} fill={resolved.handleFill} stroke={color} strokeWidth={2}
-              onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
-                e.cancelBubble = true;
-                snapshot();
-                setDraggingHandle({ annId: ann.id, handleIdx: i, startImg: getImagePos(e) });
-              }}
-            />
-            </ScreenSpace>
-          ))}
-          {overlay}
-        </Group>
-      );
-    }
-
-    if (ann.type === "polygon") {
-      if (hasHoles) {
-        return (
-          <Group key={ann.id}>
-            {renderCompoundArea(commonProps)}
-            {showHandles && rings[0]?.map(([x, y], i) => (
-              <ScreenSpace key={i} x={x} y={y} scale={scale}>
-                <Circle radius={VERTEX_RADIUS} fill={resolved.handleFill} stroke={color} strokeWidth={1.5}
-                onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
-                  e.cancelBubble = true;
-                  snapshot();
-                  setDraggingVertex({ annId: ann.id, vertIdx: i, startImg: getImagePos(e) });
-                }}
-              />
-              </ScreenSpace>
-            ))}
-            {overlay}
-          </Group>
-        );
-      }
-      return (
-        <Group key={ann.id}>
-          <Line points={ann.points.flatMap(([x, y]) => [x, y])} closed fill={hexToRgba(color, fillAlpha)} fillEnabled={!isHollowFill} {...commonProps} />
-          {showHandles && renderEdgeSplitHandles(ann, color, true)}
-          {showHandles && ann.points.map(([x, y], i) => (
-            <ScreenSpace key={i} x={x} y={y} scale={scale}>
-              <Circle radius={VERTEX_RADIUS} fill={resolved.handleFill} stroke={color} strokeWidth={1.5}
-              onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
-                e.cancelBubble = true;
-                if (e.evt.altKey) { e.evt.preventDefault(); deleteVertex(ann, i); return; }
-                snapshot();
-                setDraggingVertex({ annId: ann.id, vertIdx: i, startImg: getImagePos(e) });
-              }}
-              onContextMenu={(e: KonvaEventObject<MouseEvent>) => {
-                e.cancelBubble = true; e.evt.preventDefault();
-                deleteVertex(ann, i);
-              }}
-            />
-            </ScreenSpace>
-          ))}
-          {overlay}
-        </Group>
-      );
-    }
-
-    if (ann.type === "line" || ann.type === "polyline") {
-      return (
-        <Group key={ann.id}>
-          <Line points={ann.points.flatMap(([x, y]) => [x, y])} hitStrokeWidth={10} {...commonProps} />
-          {showHandles && renderEdgeSplitHandles(ann, color, false)}
-          {showHandles && ann.points.map(([x, y], i) => (
-            <ScreenSpace key={i} x={x} y={y} scale={scale}>
-              <Circle radius={HANDLE_RADIUS} fill={resolved.handleFill} stroke={color} strokeWidth={2}
-              onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
-                e.cancelBubble = true;
-                if (e.evt.altKey) { e.evt.preventDefault(); deleteVertex(ann, i); return; }
-                snapshot();
-                setDraggingVertex({ annId: ann.id, vertIdx: i, startImg: getImagePos(e) });
-              }}
-              onContextMenu={(e: KonvaEventObject<MouseEvent>) => {
-                e.cancelBubble = true; e.evt.preventDefault();
-                deleteVertex(ann, i);
-              }}
-            />
-            </ScreenSpace>
-          ))}
-          {overlay}
-        </Group>
-      );
-    }
-
-    if (ann.type === "point") {
-      const [x, y] = ann.points[0]!;
-      return (
-        <Group key={ann.id}>
-          <ScreenSpace x={x} y={y} scale={scale}>
-            <Circle radius={POINT_RADIUS} fill={color} stroke={isSelected ? resolved.accent : resolved.handleFill} strokeWidth={2} opacity={opacity} {...selectionGlow(SELECTION_GLOW_PX)} {...handlersFor(ann.id)} />
-          </ScreenSpace>
-          {overlay}
-        </Group>
-      );
-    }
-
-    return null;
+    );
   };
 
   // ---------------------------------------------------------------------------
@@ -2372,7 +2084,7 @@ export function AnnotationCanvas({
         <Group>
           {draw.pts.map(([x, y], i) => (
             <ScreenSpace key={i} x={x} y={y} scale={scale} listening={false}>
-              <Circle radius={POINT_RADIUS} fill={resolved.accent} stroke={resolved.handleFill} strokeWidth={2} opacity={0.85} />
+              <Circle radius={DRAW_POINT_RADIUS} fill={resolved.accent} stroke={resolved.handleFill} strokeWidth={2} opacity={0.85} />
             </ScreenSpace>
           ))}
           {renderDrawHint(draw.cur, countText)}

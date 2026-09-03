@@ -2,6 +2,42 @@
 
 All notable changes to `@astronautics44/neura-annotation-canvas`.
 
+## 2.0.4
+
+The other half of 2.0.3, found by measuring the same screen again after it
+shipped. Zoom was fixed; moving the pointer was not.
+
+### Fixed
+
+- **Hovering a mark no longer re-renders every other mark.** `hoveredId` is
+  state on the canvas, so a pointer crossing a drawing rebuilt every shape on
+  it, and panning drags the pointer across marks by definition. Measured on the
+  live takeoff screen at 2.0.3, 186 marks at 2x device pixel ratio: **19 ms per
+  pointer move over marks, 49 ms at worst**, against a wheel event that by then
+  cost 0.1 ms. Each annotation is now its own `React.memo` component
+  (`AnnotationShape`), so a hover re-renders the two shapes whose state
+  actually moved. On 451 marks: **6.5 ms to 3.0 ms** for a hover, and a pan
+  across marks is **0.4 ms** per event.
+
+- **A pan that starts on a mark pans.** Pressing with space held or the middle
+  button over a mark was swallowed by the shape, which dragged itself instead,
+  so on a dense sheet the gesture that moves the sheet moved a symbol — and the
+  denser the drawing, the harder that was to avoid. The shape now declines any
+  press that is a pan gesture, and ignores a non-primary button for selection.
+
+- **Hover is suppressed while panning.** Nobody hovering a mark is asking for
+  its label chip halfway through dragging the sheet, and the chip is a mount
+  and a text measurement per mark crossed.
+
+### Changed
+
+- **`perfectDrawEnabled` is off on annotation shapes.** Every mark has a fill,
+  a stroke and an opacity below 1, which is exactly the combination that makes
+  Konva render the shape into a throwaway buffer canvas first. On 451 marks
+  that was five sixths of the paint: **5.4 ms to 1.2 ms** per layer draw. What
+  it buys is that a semi-transparent fill does not show through the inner half
+  of its own stroke, which at these stroke widths is not visible.
+
 ## 2.0.3
 
 ### Fixed
