@@ -790,8 +790,14 @@ export function AnnotationCanvas({
   // Internal clipboard — stores copied annotations for Ctrl+C / Ctrl+V
   const [clipboard, setClipboard] = useState<CanonicalAnnotation[]>([]);
 
-  // Which annotation is being relabeled (double-click or R key)
-  const [relabelId, setRelabelId] = useState<string | null>(null);
+  /*
+   * Which annotations the relabel popover is open for.
+   *
+   * Many, not one: the same popover serves a double-click on a single shape
+   * and a bulk change of class across a whole selection, so the only thing
+   * separating those two is the length of this array.
+   */
+  const [relabelIds, setRelabelIds] = useState<string[]>([]);
 
   // Snapshot current state before a mutating action (for undo)
   const snapshot = useCallback(() => {
@@ -1118,7 +1124,7 @@ export function AnnotationCanvas({
         return;
       }
       if (e.key === "Escape") {
-        setMarquee(null); setPanMode(false); setTool("select"); setDraw({ phase: "idle" }); setRelabelId(null);
+        setMarquee(null); setPanMode(false); setTool("select"); setDraw({ phase: "idle" }); setRelabelIds([]);
         setDraftComment(null);
         if (enableComments && activeCommentId) selectComment(null, null);
         return;
@@ -1156,10 +1162,11 @@ export function AnnotationCanvas({
         return;
       }
 
-      // Relabel: R key when one annotation is selected and not mid-draw
-      if ((e.key === "r" || e.key === "R") && !e.metaKey && !e.ctrlKey && selectedIds.length === 1 && draw.phase === "idle" && !readonly) {
+      // Relabel: R key with a selection, and not mid-draw. With more than one
+      // shape selected the same keystroke is the bulk change of class.
+      if ((e.key === "r" || e.key === "R") && !e.metaKey && !e.ctrlKey && selectedIds.length >= 1 && draw.phase === "idle" && !readonly) {
         e.preventDefault();
-        setRelabelId(selectedIds[0]!);
+        setRelabelIds(selectedIds);
         return;
       }
 
@@ -1185,7 +1192,7 @@ export function AnnotationCanvas({
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp); };
-  }, [draw, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelId, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction, hiddenClasses, labels, setActiveLabel, enableActiveLabel, tool, enableComments, activeCommentId, beginComment, deleteComment, selectComment, onCommentDelete, pendingComment, cancelComment]);
+  }, [draw, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelIds, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction, hiddenClasses, labels, setActiveLabel, enableActiveLabel, tool, enableComments, activeCommentId, beginComment, deleteComment, selectComment, onCommentDelete, pendingComment, cancelComment]);
 
   // ---------------------------------------------------------------------------
   // Stage event handlers
@@ -1748,6 +1755,34 @@ export function AnnotationCanvas({
     });
   }, [annotations, dispatchAndNotify]);
 
+  /**
+   * Move a whole set of annotations onto one class, as a single undo step and a
+   * single `onChange`.
+   *
+   * This is the bulk path, and it differs from `applyRelabel` in what it does
+   * with symbol size on purpose. Relabelling one shape through the popover
+   * means "this shape's size is now what the popover says", empty included, so
+   * an empty field clears it. Doing that to a hundred shapes at once would wipe
+   * a hundred hand-entered takeoff dimensions to make one class change, so here
+   * a size is written only when the popover actually collected one, and every
+   * annotation otherwise keeps the size it already had.
+   */
+  const applyRelabelMany = useCallback((ids: string[], label: string, symbolSize?: SymbolSize) => {
+    if (ids.length === 0) return;
+    dispatchAndNotify({
+      type: "RELABEL_MANY",
+      ids,
+      label,
+      ...(symbolSize ? { symbolSize } : {}),
+    });
+  }, [dispatchAndNotify]);
+
+  /** Route the shared popover to the single- or many-shape path by count. */
+  const commitRelabel = useCallback((ids: string[], label: string, symbolSize?: SymbolSize) => {
+    if (ids.length === 1) applyRelabel(ids[0]!, label, symbolSize);
+    else applyRelabelMany(ids, label, symbolSize);
+  }, [applyRelabel, applyRelabelMany]);
+
   const handlePopoverCancel = useCallback(() => setDraw({ phase: "idle" }), []);
 
   const handleCreateLabel = useCallback((displayName: string): string => {
@@ -1796,6 +1831,17 @@ export function AnnotationCanvas({
     revealRef.current([id]);
   }, [readonly, setSelectedIds, dispatch]);
 
+  /**
+   * Select a set of rows outright — a shift-click range, or a whole class from
+   * its group header. No `BRING_TO_TOP` here, unlike the single-row path:
+   * raising a hundred shapes at once would reorder the payload wholesale to no
+   * visible end.
+   */
+  const handlePanelSelectMany = useCallback((ids: string[]) => {
+    setSelectedIds(ids);
+    revealRef.current(ids);
+  }, [setSelectedIds]);
+
   const handlePanelDelete = useCallback((id: string) => {
     dispatchAndNotify({ type: "DELETE", id });
     setSelectedIds((prev) => prev.filter((sid) => sid !== id));
@@ -1824,10 +1870,11 @@ export function AnnotationCanvas({
     [dpi, drawingScale],
   );
 
-  // Screen position for the relabel popover — top-left corner of the annotation
+  // Screen position for the relabel popover — top-left corner of the annotation,
+  // or of the first of them when the popover is relabelling a whole selection.
   const relabelPos = (() => {
-    if (!relabelId) return null;
-    const ann = annotations.find((a) => a.id === relabelId);
+    if (relabelIds.length === 0) return null;
+    const ann = annotations.find((a) => a.id === relabelIds[0]);
     if (!ann) return null;
     let imgX: number, imgY: number;
     if (ann.type === "bbox" || ann.type === "circle") {
@@ -1884,7 +1931,7 @@ export function AnnotationCanvas({
     if (tool !== "select" || readonly) return;
     e.cancelBubble = true;
     setSelectedIds([id]);
-    setRelabelId(id);
+    setRelabelIds([id]);
   }, [tool, readonly, setSelectedIds]);
 
   /*
@@ -2146,6 +2193,7 @@ export function AnnotationCanvas({
               canLayer={selectedIds.length === 1}
               readonly={readonly}
               isHollow={singleIsHollow}
+              onRelabel={readonly ? undefined : () => setRelabelIds(selectedIds)}
               onMerge={handleMerge}
               onSubtract={handleSubtract}
               onIntersect={handleIntersect}
@@ -2257,18 +2305,24 @@ export function AnnotationCanvas({
             />
           )}
           {relabelPos && !pPos && (() => {
-            const relabelAnn = annotations.find((a) => a.id === relabelId);
+            // Only a single-shape relabel pre-fills the size fields — with many
+            // selected there is no one size to show, and pre-filling the first
+            // shape's would quietly stamp it onto all the rest.
+            const relabelAnn = relabelIds.length === 1
+              ? annotations.find((a) => a.id === relabelIds[0])
+              : undefined;
             const initialSize = parseSymbolSize(relabelAnn?.meta);
             return (
               <LabelPopover
                 labels={labels}
                 position={relabelPos}
                 {...(initialSize ? { initialSymbolSize: initialSize } : {})}
+                {...(relabelIds.length > 1 ? { headline: `Change class · ${relabelIds.length} selected` } : {})}
                 onSelect={(label, symbolSize) => {
-                  if (relabelId) applyRelabel(relabelId, label, symbolSize);
-                  setRelabelId(null);
+                  commitRelabel(relabelIds, label, symbolSize);
+                  setRelabelIds([]);
                 }}
-                onCancel={() => setRelabelId(null)}
+                onCancel={() => setRelabelIds([])}
                 onCreateLabel={createLabel}
               />
             );
@@ -2289,7 +2343,9 @@ export function AnnotationCanvas({
           onSelect={handlePanelSelect}
           onDelete={handlePanelDelete}
           onDeleteSelected={handlePanelDeleteSelected}
+          onSelectMany={handlePanelSelectMany}
           onRelabel={applyRelabel}
+          onRelabelMany={applyRelabelMany}
         />
         )}
       </div>

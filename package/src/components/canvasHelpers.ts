@@ -88,6 +88,17 @@ export function annotationReducer(state: CanonicalAnnotation[], action: import("
     case "ADD": return [...state, action.payload];
     case "ADD_MANY": return [...state, ...action.payload];
     case "UPDATE": return state.map((a) => (a.id === action.payload.id ? action.payload : a));
+    case "RELABEL_MANY": {
+      const ids = new Set(action.ids);
+      if (ids.size === 0) return state;
+      return state.map((a) => {
+        if (!ids.has(a.id)) return a;
+        if (!action.symbolSize) {
+          return a.label === action.label ? a : { ...a, label: action.label };
+        }
+        return { ...a, label: action.label, meta: { ...a.meta, symbolSize: action.symbolSize } };
+      });
+    }
     case "DELETE": return state.filter((a) => a.id !== action.id);
     case "DELETE_MANY": return state.filter((a) => !action.ids.includes(a.id));
     case "MOVE": return state.map((a) =>

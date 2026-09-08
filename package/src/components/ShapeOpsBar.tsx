@@ -16,6 +16,11 @@ interface Props {
   onSendBackward: () => void;
   isHollow: boolean;
   /**
+   * Change the class of everything selected. Provided only when editing is
+   * allowed — the visible path to the bulk relabel, so it is not `R`-only.
+   */
+  onRelabel?: (() => void) | undefined;
+  /**
    * Start a comment on the selection. Provided only when commenting is on —
    * the visible path to the comment box, so it is not hotkey-only.
    */
@@ -69,6 +74,7 @@ export function ShapeOpsBar({
   onBringForward,
   onSendBackward,
   isHollow,
+  onRelabel,
   onComment,
 }: Props) {
   if (count === 0) return null;
@@ -95,6 +101,19 @@ export function ShapeOpsBar({
       <span style={{ fontSize: 10, color: "var(--ae-text-secondary)", marginRight: 4, textTransform: "uppercase", letterSpacing: "0.06em" }}>
         {count} selected
       </span>
+
+      {onRelabel && (
+        <OpButton
+          label={count > 1 ? `Change class (${count})` : "Change class"}
+          title={
+            count > 1
+              ? `Assign one class to all ${count} selected annotations (R)`
+              : "Change this annotation's class (R)"
+          }
+          disabled={false}
+          onClick={onRelabel}
+        />
+      )}
 
       {onComment && (
         <>
