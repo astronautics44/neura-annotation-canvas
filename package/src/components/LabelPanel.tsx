@@ -19,9 +19,21 @@ interface Props {
   /** Called with the next full set of hidden class ids when the user toggles visibility. */
   onVisibilityChange?: (next: Set<string>) => void;
   onSelect: (id: string, additive: boolean) => void;
+  /**
+   * Replace the selection outright with this exact set — a shift-click range,
+   * or every row of one class. Without it the panel keeps its one-row-at-a-time
+   * behaviour and shift falls back to toggling.
+   */
+  onSelectMany?: (ids: string[]) => void;
   onDelete: (id: string) => void;
   onDeleteSelected?: () => void;
   onRelabel: (id: string, label: string, symbolSize?: SymbolSize) => void;
+  /**
+   * Move many annotations onto one class in a single step — the bulk relabel
+   * behind the header button and the per-class "change class" action. Without
+   * it those controls do not appear.
+   */
+  onRelabelMany?: (ids: string[], label: string, symbolSize?: SymbolSize) => void;
   onCreateLabel?: ((displayName: string) => string) | undefined;
   readonly?: boolean;
   width?: number;
@@ -37,9 +49,11 @@ function LabelPanelImpl({
   hiddenClasses,
   onVisibilityChange,
   onSelect,
+  onSelectMany,
   onDelete,
   onDeleteSelected,
   onRelabel,
+  onRelabelMany,
   onCreateLabel,
   readonly = false,
   width = 220,
@@ -48,12 +62,22 @@ function LabelPanelImpl({
 }: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
+  const [hoveredGroup, setHoveredGroup] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  /*
+   * Where a shift-click range starts. The last row the user picked deliberately
+   * — by a plain or toggling click here, or by selecting a single shape on the
+   * canvas — so extending a range behaves the way it does in a file list.
+   */
+  const rangeAnchor = useRef<string | null>(null);
 
   // When canvas selection changes: auto-expand group + scroll row into view
   useEffect(() => {
     if (selectedIds.length === 0) return;
     const firstId = selectedIds[0]!;
+    // One shape picked on the canvas is as deliberate as one row clicked here,
+    // so a shift-click in the list extends from it.
+    if (selectedIds.length === 1) rangeAnchor.current = firstId;
     const ann = annotations.find((a) => a.id === firstId);
     if (ann) {
       // Annotations whose label is not in the registry live in the unknown
@@ -99,23 +123,37 @@ function LabelPanelImpl({
   }, [selectedIds]); // eslint-disable-line react-hooks/exhaustive-deps
   const [query, setQuery] = useState("");
   const panelRef = useRef<HTMLDivElement>(null);
+  /*
+   * What the relabel popover is about to act on: one row, every row of a class,
+   * or the whole selection. All three are the same popover over a list of ids —
+   * the headline is what tells the user which of the three they opened.
+   */
   const [relabelTarget, setRelabelTarget] = useState<{
-    id: string;
+    ids: string[];
     pos: { x: number; y: number };
+    headline?: string;
   } | null>(null);
 
   // Popover width in its widest (symbol-size) phase, plus a gap — used to place
   // the relabel popover fully to the left of the panel, over the canvas, so it
   // never covers the annotation list.
   const RELABEL_POPOVER_CLEARANCE = 248;
-  const openRelabel = (id: string, buttonRect: DOMRect) => {
+  const openRelabel = (
+    ids: string[],
+    buttonRect: DOMRect,
+    headline?: string,
+  ) => {
+    if (ids.length === 0) return;
     const panelLeft =
       panelRef.current?.getBoundingClientRect().left ?? buttonRect.left;
     setRelabelTarget({
-      id,
+      ids,
       pos: { x: panelLeft - RELABEL_POPOVER_CLEARANCE, y: buttonRect.top },
+      ...(headline ? { headline } : {}),
     });
   };
+  /** Bulk relabel needs a handler to bulk-relabel with. */
+  const canBulkRelabel = !readonly && !!onRelabelMany;
 
   const filteredAnnotations = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -168,6 +206,38 @@ function LabelPanelImpl({
     setClassesHidden(Array.from(presentLabelIds), !allHidden);
 
   const shortId = (id: string) => id.slice(0, 7);
+
+  /*
+   * Every row currently on screen, top to bottom — the order a shift-click
+   * range runs along. Rows inside a collapsed group are not on it, because a
+   * range the user cannot see is a range they did not mean to draw.
+   */
+  const flatRowIds: string[] = [];
+  grouped.forEach(({ lm, items }) => {
+    if (collapsed.has(lm.canonicalClassId)) return;
+    items.forEach((a) => flatRowIds.push(a.id));
+  });
+  if (!collapsed.has(UNGROUPED_KEY)) ungrouped.forEach((a) => flatRowIds.push(a.id));
+
+  /**
+   * Plain click selects the row. Cmd/Ctrl adds or removes one. Shift extends
+   * from the last deliberate pick to here, the way a file list does — and falls
+   * back to the old add-one behaviour when there is no anchor to extend from,
+   * or when the consumer wired no `onSelectMany`.
+   */
+  const handleRowClick = (id: string, e: React.MouseEvent) => {
+    if (e.shiftKey && onSelectMany && rangeAnchor.current) {
+      const from = flatRowIds.indexOf(rangeAnchor.current);
+      const to = flatRowIds.indexOf(id);
+      if (from !== -1 && to !== -1) {
+        const [lo, hi] = from <= to ? [from, to] : [to, from];
+        onSelectMany(flatRowIds.slice(lo, hi + 1));
+        return;
+      }
+    }
+    rangeAnchor.current = id;
+    onSelect(id, e.shiftKey || e.metaKey || e.ctrlKey);
+  };
 
   const toggleCollapse = (classId: string) => {
     setCollapsed((prev) => {
@@ -302,6 +372,34 @@ function LabelPanelImpl({
                 }}
               >
                 <EyeIcon open={!allHidden} />
+              </button>
+            )}
+            {selectedIds.length > 1 && canBulkRelabel && (
+              <button
+                title={`Assign one class to all ${selectedIds.length} selected`}
+                onClick={(e) =>
+                  openRelabel(
+                    selectedIds,
+                    e.currentTarget.getBoundingClientRect(),
+                    `Change class · ${selectedIds.length} selected`,
+                  )
+                }
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  fontSize: 10,
+                  background: "var(--ae-selection)",
+                  border: "1px solid var(--ae-accent)",
+                  borderRadius: 6,
+                  padding: "2px 6px",
+                  color: "var(--ae-text-primary)",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                <PencilIcon />
+                {selectedIds.length}
               </button>
             )}
             {selectedIds.length > 1 && !readonly && onDeleteSelected && (
@@ -441,6 +539,8 @@ function LabelPanelImpl({
               {/* Sticky group header */}
               <div
                 onClick={() => toggleCollapse(lm.canonicalClassId)}
+                onMouseEnter={() => setHoveredGroup(lm.canonicalClassId)}
+                onMouseLeave={() => setHoveredGroup(null)}
                 style={{
                   position: "sticky",
                   top: 0,
@@ -479,6 +579,41 @@ function LabelPanelImpl({
                 >
                   {lm.displayName}
                 </span>
+                {hoveredGroup === lm.canonicalClassId && (
+                  <div
+                    style={{ display: "flex", gap: 2, flexShrink: 0 }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {onSelectMany && (
+                      <button
+                        title={`Select all ${items.length} in ${lm.displayName}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectMany(items.map((a) => a.id));
+                        }}
+                        style={eyeBtn}
+                      >
+                        <SelectAllIcon />
+                      </button>
+                    )}
+                    {canBulkRelabel && (
+                      <button
+                        title={`Move all ${items.length} ${lm.displayName} annotations to another class`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openRelabel(
+                            items.map((a) => a.id),
+                            e.currentTarget.getBoundingClientRect(),
+                            `${lm.displayName} → · ${items.length} annotations`,
+                          );
+                        }}
+                        style={eyeBtn}
+                      >
+                        <PencilIcon />
+                      </button>
+                    )}
+                  </div>
+                )}
                 {onVisibilityChange && (
                   <button
                     title={isHidden ? "Show on canvas" : "Hide from canvas"}
@@ -531,7 +666,7 @@ function LabelPanelImpl({
                     readonly={readonly}
                     {...(dimensionContext ? { dimensionContext } : {})}
                     shortId={shortId}
-                    onSelect={onSelect}
+                    onRowClick={handleRowClick}
                     onDelete={onDelete}
                     onRelabelRequest={openRelabel}
                     onMouseEnter={() => setHoveredRow(ann.id)}
@@ -552,6 +687,8 @@ function LabelPanelImpl({
           <div style={{ opacity: unknownHidden ? 0.45 : 1 }}>
             <div
               onClick={() => toggleCollapse(UNGROUPED_KEY)}
+              onMouseEnter={() => setHoveredGroup(UNGROUPED_KEY)}
+              onMouseLeave={() => setHoveredGroup(null)}
               style={{
                 cursor: "pointer",
                 position: "sticky",
@@ -570,6 +707,41 @@ function LabelPanelImpl({
               }}
             >
               <span style={{ flex: 1 }}>Unknown label ({ungrouped.length})</span>
+              {hoveredGroup === UNGROUPED_KEY && (
+                <div
+                  style={{ display: "flex", gap: 2, flexShrink: 0 }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {onSelectMany && (
+                    <button
+                      title={`Select all ${ungrouped.length} unknown-label annotations`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectMany(ungrouped.map((a) => a.id));
+                      }}
+                      style={eyeBtn}
+                    >
+                      <SelectAllIcon />
+                    </button>
+                  )}
+                  {canBulkRelabel && (
+                    <button
+                      title={`Move all ${ungrouped.length} unknown-label annotations to a class`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openRelabel(
+                          ungrouped.map((a) => a.id),
+                          e.currentTarget.getBoundingClientRect(),
+                          `Unknown label → · ${ungrouped.length} annotations`,
+                        );
+                      }}
+                      style={eyeBtn}
+                    >
+                      <PencilIcon />
+                    </button>
+                  )}
+                </div>
+              )}
               {onVisibilityChange && (
                 <button
                   title={unknownHidden ? "Show on canvas" : "Hide from canvas"}
@@ -606,9 +778,9 @@ function LabelPanelImpl({
                 readonly={readonly}
                 {...(dimensionContext ? { dimensionContext } : {})}
                 shortId={shortId}
-                onSelect={onSelect}
+                onRowClick={handleRowClick}
                 onDelete={onDelete}
-                onRelabelRequest={(id, pos) => setRelabelTarget({ id, pos })}
+                onRelabelRequest={openRelabel}
                 onMouseEnter={() => setHoveredRow(ann.id)}
                 onMouseLeave={() => setHoveredRow(null)}
                 indent={12}
@@ -623,7 +795,12 @@ function LabelPanelImpl({
       </div>
 
       {relabelTarget && (() => {
-        const relabelAnn = annotations.find((a) => a.id === relabelTarget.id);
+        // Only a single-row relabel pre-fills the size fields: across many
+        // annotations there is no one size to show, and showing the first
+        // one's would stamp it onto all the rest on the next Enter.
+        const relabelAnn = relabelTarget.ids.length === 1
+          ? annotations.find((a) => a.id === relabelTarget.ids[0])
+          : undefined;
         const initialSize = parseSymbolSize(relabelAnn?.meta);
         // Rendered in place (keeps the theme's CSS variables) but positioned
         // with `fixed` + viewport coordinates so it escapes the panel's
@@ -634,8 +811,13 @@ function LabelPanelImpl({
             position={relabelTarget.pos}
             positionStrategy="fixed"
             {...(initialSize ? { initialSymbolSize: initialSize } : {})}
+            {...(relabelTarget.headline ? { headline: relabelTarget.headline } : {})}
             onSelect={(label, symbolSize) => {
-              onRelabel(relabelTarget.id, label, symbolSize);
+              if (relabelTarget.ids.length === 1) {
+                onRelabel(relabelTarget.ids[0]!, label, symbolSize);
+              } else {
+                onRelabelMany?.(relabelTarget.ids, label, symbolSize);
+              }
               setRelabelTarget(null);
             }}
             onCancel={() => setRelabelTarget(null)}
@@ -654,9 +836,9 @@ interface AnnotationRowProps {
   readonly: boolean;
   dimensionContext?: { dpi: number; drawingScale: DrawingScaleInput };
   shortId: (id: string) => string;
-  onSelect: (id: string, additive: boolean) => void;
+  onRowClick: (id: string, e: React.MouseEvent) => void;
   onDelete: (id: string) => void;
-  onRelabelRequest: (id: string, buttonRect: DOMRect) => void;
+  onRelabelRequest: (ids: string[], buttonRect: DOMRect) => void;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
   indent?: number;
@@ -669,7 +851,7 @@ function AnnotationRow({
   readonly,
   dimensionContext,
   shortId,
-  onSelect,
+  onRowClick,
   onDelete,
   onRelabelRequest,
   onMouseEnter,
@@ -698,9 +880,7 @@ function AnnotationRow({
   return (
     <div
       data-ann-id={ann.id}
-      onClick={(e) =>
-        onSelect(ann.id, e.shiftKey || e.metaKey || e.ctrlKey)
-      }
+      onClick={(e) => onRowClick(ann.id, e)}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       style={{
@@ -790,7 +970,7 @@ function AnnotationRow({
               title="Relabel"
               onClick={(e) => {
                 e.stopPropagation();
-                onRelabelRequest(ann.id, e.currentTarget.getBoundingClientRect());
+                onRelabelRequest([ann.id], e.currentTarget.getBoundingClientRect());
               }}
               style={actionBtn}
             >
@@ -858,6 +1038,25 @@ const eyeBtn: React.CSSProperties = {
   padding: 0,
   flexShrink: 0,
 };
+
+/** Pencil — relabel, one row or many. */
+function PencilIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
+      <path d="M11.5 2.5a2.121 2.121 0 013 3L5 15H2v-3L11.5 2.5z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** Stacked rows with a tick — select every annotation in this group. */
+function SelectAllIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+      <path d="M2 3.5h9M2 7h6M2 10.5h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M8.5 11.5l2 2 4-4.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
 
 /** Eye (visible) / eye-off (hidden) toggle icon. */
 function EyeIcon({ open }: { open: boolean }) {

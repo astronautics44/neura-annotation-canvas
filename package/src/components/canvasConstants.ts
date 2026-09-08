@@ -51,6 +51,15 @@ export type Action =
   | { type: "ADD"; payload: import("../types/canonical").CanonicalAnnotation }
   | { type: "ADD_MANY"; payload: import("../types/canonical").CanonicalAnnotation[] }
   | { type: "UPDATE"; payload: import("../types/canonical").CanonicalAnnotation }
+  /**
+   * Reassign the class of many annotations at once, as one step.
+   *
+   * `symbolSize` is applied to every one of them when given, and every
+   * annotation keeps the size it already had when it is not — a bulk relabel
+   * that silently wiped a hundred hand-measured dimensions because the popover
+   * was left blank would be the wrong default.
+   */
+  | { type: "RELABEL_MANY"; ids: string[]; label: string; symbolSize?: import("../types/canonical").SymbolSize }
   | { type: "DELETE"; id: string }
   | { type: "DELETE_MANY"; ids: string[] }
   | { type: "MOVE"; id: string; delta: [number, number] }

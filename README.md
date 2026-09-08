@@ -621,6 +621,7 @@ The theme values are injected as CSS custom properties on the root element (`--a
 | Redo            | `Cmd/Ctrl` + `Shift` + `Z` / `Ctrl+Y`, or ↻ button |
 | Cancel draw     | `Escape`                                          |
 | Delete selected | `Delete` or `Backspace` (works with multi-select) |
+| Change class    | `R` — one selected shape or many; with many it is the bulk relabel |
 | Pin class       | `1`–`9` pins the nth label (when `enableActiveLabel`) |
 | Unpin class     | `0`, or ✕ on the class chip                       |
 
@@ -637,12 +638,93 @@ therefore trails a gesture by up to 100 ms; the cursor readout does not.
 
 ### Multi-select
 
-When `enableSelectAll` is true (default), `Ctrl/Cmd+A` selects all annotations simultaneously. With multiple annotations selected:
+Ways to build a selection:
+
+| Where            | Gesture                       | Result                                             |
+| ---------------- | ----------------------------- | -------------------------------------------------- |
+| Canvas           | Click a shape                 | Selects it alone                                    |
+| Canvas           | `Shift`/`⌘`-click a shape     | Adds it to (or removes it from) the selection       |
+| Canvas           | Drag on empty space           | Marquee — selects everything the box touches         |
+| Canvas           | `Ctrl/Cmd+A`                  | Selects all (when `enableSelectAll` is true)         |
+| Annotations list | Click a row                   | Selects that annotation alone                        |
+| Annotations list | `⌘`/`Ctrl`-click a row        | Toggles that row in the selection                    |
+| Annotations list | `Shift`-click a row           | Selects the whole visible range from the last pick   |
+| Annotations list | Group header → select icon    | Selects every annotation of that class               |
+
+Hidden classes are never selected — they are excluded from clicks, the marquee, and select-all.
+
+With multiple annotations selected:
 
 - All selected annotations highlight (filled state, no resize handles)
 - `Delete` / `Backspace` deletes the entire selection in a single undo step
+- `R`, or **Change class** on the floating selection bar, reassigns them all to one class in a single undo step — see [Bulk class changes](#bulk-class-changes)
 - Dragging a selected annotation moves **all** selected annotations together
+- `Ctrl/Cmd+C` / `Ctrl/Cmd+V` copies and pastes the whole selection; `Ctrl/Cmd+D` duplicates it in place
 - Clicking any single annotation (or empty canvas) collapses back to a single/no selection
+
+**Shift-click ranges** run down the list exactly as it is drawn: top to bottom,
+group by group, skipping any group that is collapsed. The anchor is the last row
+you picked deliberately — a plain or `⌘`-click here, or a single shape clicked on
+the canvas — so selecting a shape on the drawing and then shift-clicking a row
+extends from it.
+
+---
+
+## Bulk class changes
+
+Correcting a CV engine's output is mostly one job repeated: a whole class came
+back under the wrong name, or a scattered handful of marks did. Both are a
+single step here, and both are one entry on the undo stack and one `onChange`.
+
+### Reassign a selection
+
+Select any number of annotations — however you like, from the table above — then:
+
+- press **`R`**, or
+- click **Change class (n)** on the floating bar above the canvas, or
+- click the **✎ n** button in the annotations panel header
+
+The label popover opens with a headline naming what it will act on
+(`Change class · 14 selected`). Pick or create a class, and every selected
+annotation moves onto it.
+
+### Translate a whole class into another
+
+To turn all 10 `Door` annotations into `Window`, hover the **Door** group header
+in the annotations panel and click **✎**. The popover opens headed
+`Door → · 10 annotations`; pick `Window` and every child of that group moves
+across. The group disappears from the list because nothing is filed under it any
+more — the class itself stays in the registry, since a registry is a client's
+schema and not something a relabel should edit.
+
+The same action sits on the **Unknown label** bucket, which is where annotations
+whose `label` matches no `LabelMap` collect. That is the fastest fix for an
+engine that emitted a class name your registry does not carry: hover the bucket,
+click ✎, pick the right class, done.
+
+> **With a filter active**, both class actions apply to exactly the rows the
+> group is showing — the count in the button is the count that will change. Clear
+> the filter first to move the whole class.
+
+### What a bulk change does and does not touch
+
+| Field        | Bulk relabel                                                                 |
+| ------------ | ---------------------------------------------------------------------------- |
+| `label`      | Set to the picked class on every annotation in the set                        |
+| `meta.symbolSize` | Written on all of them **only when the popover collected a size**. Left exactly as it was otherwise |
+| `source`     | Unchanged — a relabel does not re-attribute an engine mark to a human         |
+| `confidence` | Unchanged                                                                     |
+| `points`, `type`, `id`, other `meta` | Unchanged                                             |
+
+The `symbolSize` rule is the one place bulk and single relabel differ on
+purpose. Relabelling **one** shape through the popover means "this shape's size
+is now what the popover says", an empty field included, so an empty field clears
+it. Doing that to a hundred shapes at once would wipe a hundred hand-entered
+takeoff dimensions as a side effect of a class change, so the bulk path writes a
+size only when one was actually entered.
+
+Consumers see the result as an ordinary `onChange` with the full array. Nothing
+new is exported and no prop changed — this is UI over the same reducer state.
 
 ---
 
@@ -922,6 +1004,7 @@ Appears after completing a draw gesture (or when relabeling). Supports:
 - If the typed name doesn't match any label, a **Create "..."** row appears — only when `onLabelsChange` is wired, and never in `readonly` mode. A class minted here lives in the canvas's own state until that callback carries it out, so a consumer that is not listening is not offered one (2.0.1)
 - When the selected label has `symbolSize: "optional" | "required"`, a second step collects **Attribute**, **Value**, and **Unit** (see [Symbol size](#symbol-size-manual-takeoff-dimensions))
 - A **Keep for next shapes** checkbox pins the label being picked, so following shapes skip the popover entirely — only when `enableActiveLabel` is on (see [Pinned annotation class](#pinned-annotation-class))
+- When it is about to act on more than the shape under the cursor, a caption above the search field names the set — `Change class · 14 selected`, or `Door → · 10 annotations`. The size fields are pre-filled only for a single annotation; across many there is no one size to show (see [Bulk class changes](#bulk-class-changes))
 
 ---
 
@@ -1187,6 +1270,9 @@ Comments never enter `onChange` or `onSave`. The annotation payload is unaffecte
 Shows all annotations grouped by label. Features:
 
 - Click an annotation row to select it on canvas (auto-pans if out of view)
+- `⌘`/`Ctrl`-click a row to add or remove it from the selection; `Shift`-click to select the whole visible range from the last row you picked (see [Multi-select](#multi-select))
+- **Per-class actions** — hover a group header for two buttons: select every annotation of that class, and move every annotation of that class onto another class (see [Bulk class changes](#bulk-class-changes)). Both are on the **Unknown label** bucket too
+- **Bulk relabel** — with more than one annotation selected, the ✎ button in the panel header assigns one class to all of them in a single undo step
 - **Selecting an annotation on canvas auto-scrolls the panel to that row and highlights it** — collapsed groups are automatically expanded
 - Click a group header to collapse/expand
 - **Collapse all** — the chevron button in the panel header folds every class group at once (including the unknown-label bucket), and expands them all again when everything is already collapsed. Useful on drawings with many classes: collapse everything, then open just the class you're reviewing. Selecting an annotation on canvas still auto-expands its group.
@@ -1215,7 +1301,7 @@ What stays available with the panel hidden:
 | Select a shape        | Click it on the canvas; shift/⌘-click to add; drag a marquee for many          |
 | Select all            | `Ctrl/Cmd+A`                                                                  |
 | Delete                | `Delete` / `Backspace` on the selection                                       |
-| Relabel               | `R` with exactly one shape selected — opens the same label popover            |
+| Relabel               | `R` with any number of shapes selected, or **Change class** on the floating selection bar — opens the same label popover. With many selected it is the bulk relabel |
 | Class visibility      | Not available — the eye toggles live in the panel. Any classes hidden while the panel was visible are shown again, so nothing can be stranded off-screen with no control to bring it back. |
 
 `onChange` and `onSave` payloads are **identical** either way. The panel is a view
@@ -1244,7 +1330,7 @@ All state lives inside `AnnotationCanvas`. No external store required.
 
 Undo/redo history is kept in-memory (up to 100 steps). It resets when the `annotations` prop changes (e.g. when switching fixtures). The toolbar undo/redo buttons are automatically enabled/disabled based on history availability.
 
-**Undo granularity:** each complete drag gesture (mousedown → mouseup) counts as one undo step, not one step per pixel moved. A snapshot is taken when the drag starts; intermediate positions during the drag are not pushed to history. Discrete actions (draw, delete, relabel, split segment) each produce their own undo step.
+**Undo granularity:** each complete drag gesture (mousedown → mouseup) counts as one undo step, not one step per pixel moved. A snapshot is taken when the drag starts; intermediate positions during the drag are not pushed to history. Discrete actions (draw, delete, relabel, split segment) each produce their own undo step. A bulk action over a selection — delete, move, or a class change across 200 annotations — is **one** step, not 200.
 
 ---
 

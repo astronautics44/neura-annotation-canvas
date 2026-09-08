@@ -16,6 +16,13 @@ interface Props {
   onCreateLabel?: ((displayName: string) => string) | undefined;
   /** Pre-fill symbol size fields when relabeling an existing annotation. */
   initialSymbolSize?: SymbolSize;
+  /**
+   * Small caption above the search field, naming what the pick will apply to —
+   * "Change class · 14 selected". Set it whenever the popover acts on more than
+   * the one shape under the cursor, so a bulk change never looks like a single
+   * one.
+   */
+  headline?: string;
   /** Show the "keep for next shapes" checkbox. Only meaningful while drawing. */
   allowPin?: boolean;
   /** Initial state of the pin checkbox. */
@@ -64,6 +71,7 @@ export function LabelPopover({
   onCancel,
   onCreateLabel,
   initialSymbolSize,
+  headline,
   positionStrategy = "absolute",
   allowPin = false,
   pinned = false,
@@ -239,6 +247,25 @@ export function LabelPopover({
         overflow: "hidden",
       }}
     >
+      {headline && (
+        <div
+          style={{
+            padding: "5px 10px",
+            borderBottom: "1px solid var(--ae-border-subtle)",
+            background: "var(--ae-bg-elevated)",
+            color: "var(--ae-text-secondary)",
+            fontSize: 10,
+            textTransform: "uppercase",
+            letterSpacing: "0.06em",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {headline}
+        </div>
+      )}
+
       {phase === "pick-label" && (
         <>
           <div style={{ padding: "6px 8px", borderBottom: "1px solid var(--ae-border-subtle)" }}>

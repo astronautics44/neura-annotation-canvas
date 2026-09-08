@@ -2,6 +2,66 @@
 
 All notable changes to `@astronautics44/neura-annotation-canvas`.
 
+## 2.1.0
+
+Correcting a CV engine's output is mostly one job repeated: a class came back
+under the wrong name, or a scattered handful of marks did. Both took one click
+per mark. Both are now one step.
+
+### Added
+
+- **Bulk class change across a selection.** Select any number of annotations —
+  marquee, `Ctrl/Cmd+A`, shift-click on the canvas, or the list — and press `R`,
+  or click **Change class (n)** on the floating selection bar, or the **✎ n**
+  button in the annotations panel header. One popover, one class, every selected
+  annotation moved onto it. Previously `R` and the floating bar did nothing
+  above a selection of one, so a hundred wrong marks meant a hundred popovers.
+
+- **Translate a whole class into another.** Hover a class group header in the
+  annotations panel and click **✎**: every annotation filed under it moves to
+  the class you pick. `Door → · 10 annotations` — the popover says what it is
+  about to do. The same action sits on the **Unknown label** bucket, which is
+  the fastest fix for an engine that emitted a class name the registry does not
+  carry. The source class stays in the registry; a registry is the client's
+  schema, not something a relabel should edit.
+
+- **Select every annotation of one class**, from the same group header. Pairs
+  with the bulk delete that was already there, and with the bulk relabel above.
+
+- **Shift-click ranges in the annotations list.** `Shift` now extends the
+  selection from the last row picked deliberately to the row clicked, running
+  down the list as drawn — group by group, skipping collapsed groups. `⌘`/`Ctrl`
+  keeps toggling one row at a time. The anchor follows a single shape clicked on
+  the canvas too, so picking a shape on the drawing and shift-clicking a row
+  selects everything between them.
+
+- **A caption on the label popover** naming what a pick will apply to, whenever
+  that is more than the one shape under the cursor.
+
+### Changed
+
+- **`Shift`-click on a list row is a range, not a toggle.** It used to do the
+  same thing as `⌘`-click. A consumer that renders its own list is unaffected;
+  the canvas's own shift-click still adds to the selection, as it always did.
+
+- **One undo step per bulk action.** A class change over 200 annotations is one
+  entry on the stack and one `onChange`, the way bulk delete and bulk move
+  already were.
+
+### Notes
+
+- A bulk relabel writes `meta.symbolSize` **only when the popover collected
+  one**, and otherwise leaves every annotation's existing size alone. This
+  differs from relabelling a single shape on purpose, where an empty size field
+  clears the size: doing that across a hundred shapes would wipe a hundred
+  hand-entered takeoff dimensions as a side effect of a class change.
+
+- `source` and `confidence` are untouched by a relabel, in bulk or singly — an
+  engine mark that gets reclassified is still an engine mark.
+
+- Nothing new is exported and no prop changed. This is UI over the same reducer
+  state, and `onChange` / `onSave` payloads have the same shape they always had.
+
 ## 2.0.4
 
 The other half of 2.0.3, found by measuring the same screen again after it
