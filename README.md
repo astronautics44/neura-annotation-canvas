@@ -182,6 +182,7 @@ interface AnnotationCanvasProps {
   enableSelectAll?: boolean;  // Ctrl/Cmd+A selects all annotations
   showFullscreen?: boolean;   // fullscreen toggle button in the status bar
   showAnnotationsPanel?: boolean; // annotations list panel on the right
+  annotationGroupsCollapsed?: boolean; // start every class group in the panel collapsed; default: false
 
   // Label chip visibility
   labelVisibility?: "always" | "hover" | "selected" | "hover+selected"; // default: "always"
@@ -1282,6 +1283,22 @@ Shows all annotations grouped by label. Features:
 - When `meta.symbolSize` is set, the row shows the manual dimension (e.g. `diameter - 12mm`)
 - When `dpi` and `drawingScale` are set, each row also shows the computed real-world size below the annotation ID (e.g. `4.25m` for a line, `0.90m×2.10m · 1.89m²` for a bbox, `14.2m²` for a polygon, `⌀0.60m · 0.28m²` for a circle)
 - Bounded shapes (bbox, polygon, circle) also show their perimeter on a `P` line beneath the size (e.g. `P 6.20m`). Read the same numbers programmatically with [`measure`](#measure--area--perimeter-readout).
+
+### Starting with every group collapsed — `annotationGroupsCollapsed`
+
+```tsx
+<AnnotationCanvas annotationGroupsCollapsed ... />
+```
+
+Defaults to `false`, which is the panel as it always was: every class group
+open. When `true` the panel opens on a list of class headers with their counts,
+which is what a drawing with dozens of classes and hundreds of marks wants to
+show first. A class that appears later, created from the label popover, starts
+collapsed as well.
+
+Nothing else about collapsing changes. A group's chevron opens and closes it,
+**Collapse all** in the header folds or unfolds every group, and selecting a
+shape on the canvas still opens the group it belongs to and scrolls to its row.
 
 ### Hiding the panel — `showAnnotationsPanel`
 

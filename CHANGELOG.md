@@ -2,6 +2,17 @@
 
 All notable changes to `@astronautics44/neura-annotation-canvas`.
 
+## 2.1.1
+
+### Added
+
+- **`annotationGroupsCollapsed`**, optional, default `false`. Starts every class
+  group in the annotations panel collapsed, including one created later, so a
+  drawing with many classes opens on the class headers rather than on every
+  row. Chevrons, **Collapse all** and selecting a shape on the canvas still open
+  groups exactly as before. Omitting the prop changes nothing for an existing
+  consumer.
+
 ## 2.1.0
 
 Correcting a CV engine's output is mostly one job repeated: a class came back

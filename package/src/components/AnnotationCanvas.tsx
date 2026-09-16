@@ -215,6 +215,14 @@ interface Props {
    */
   showAnnotationsPanel?: boolean;
   /**
+   * Start every class group in the annotations panel collapsed, so a drawing
+   * with many classes opens on a list of class headers rather than on every
+   * row. A group that appears later starts collapsed too. The group chevrons,
+   * "collapse all" and selecting a shape on the canvas still open them.
+   * Default: false
+   */
+  annotationGroupsCollapsed?: boolean;
+  /**
    * When label chips are visible on annotations.
    * - "always"         — always shown when zoom ≥ 30% (default)
    * - "hover"          — only while the cursor is over the annotation
@@ -398,6 +406,7 @@ export function AnnotationCanvas({
   enableSelectAll = true,
   showFullscreen = true,
   showAnnotationsPanel = true,
+  annotationGroupsCollapsed = false,
   labelVisibility = "always",
   labelDisplayMode = "chip",
   polylineFinishAction = "enter",
@@ -2346,6 +2355,7 @@ export function AnnotationCanvas({
           onSelectMany={handlePanelSelectMany}
           onRelabel={applyRelabel}
           onRelabelMany={applyRelabelMany}
+          groupsCollapsed={annotationGroupsCollapsed}
         />
         )}
       </div>
