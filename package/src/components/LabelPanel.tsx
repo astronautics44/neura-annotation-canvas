@@ -38,6 +38,12 @@ interface Props {
   readonly?: boolean;
   width?: number;
   height?: number;
+  /**
+   * Start every class group collapsed, including one that appears later. The
+   * header chevrons, "collapse all" and selecting a shape on the canvas still
+   * open them. Default: false
+   */
+  groupsCollapsed?: boolean;
   /** When both dpi and drawing scale are set, calculated sizes appear in the list. */
   dimensionContext?: { dpi: number; drawingScale: DrawingScaleInput };
 }
@@ -59,8 +65,23 @@ function LabelPanelImpl({
   width = 220,
   height,
   dimensionContext,
+  groupsCollapsed = false,
 }: Props) {
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  /*
+   * The groups the user has flipped away from the default. Stored as a
+   * difference rather than as the collapsed set, so that with `groupsCollapsed`
+   * a class that arrives after mount starts collapsed like every other.
+   */
+  const [flipped, setFlipped] = useState<Set<string>>(new Set());
+  const isCollapsed = (key: string) => flipped.has(key) !== groupsCollapsed;
+  const withOpen = (prev: Set<string>, keys: readonly string[], open: boolean) => {
+    const next = new Set(prev);
+    for (const key of keys) {
+      if (open === groupsCollapsed) next.add(key);
+      else next.delete(key);
+    }
+    return next;
+  };
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
   const [hoveredGroup, setHoveredGroup] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -85,12 +106,9 @@ function LabelPanelImpl({
       const key = labels.some((l) => l.canonicalClassId === ann.label)
         ? ann.label
         : UNGROUPED_KEY;
-      setCollapsed((prev) => {
-        if (!prev.has(key)) return prev;
-        const next = new Set(prev);
-        next.delete(key);
-        return next;
-      });
+      setFlipped((prev) =>
+        prev.has(key) !== groupsCollapsed ? withOpen(prev, [key], true) : prev,
+      );
     }
     // Scroll the list container itself (not via scrollIntoView, which also
     // scrolls outer page ancestors when the canvas is embedded). Two rAFs so
@@ -214,10 +232,10 @@ function LabelPanelImpl({
    */
   const flatRowIds: string[] = [];
   grouped.forEach(({ lm, items }) => {
-    if (collapsed.has(lm.canonicalClassId)) return;
+    if (isCollapsed(lm.canonicalClassId)) return;
     items.forEach((a) => flatRowIds.push(a.id));
   });
-  if (!collapsed.has(UNGROUPED_KEY)) ungrouped.forEach((a) => flatRowIds.push(a.id));
+  if (!isCollapsed(UNGROUPED_KEY)) ungrouped.forEach((a) => flatRowIds.push(a.id));
 
   /**
    * Plain click selects the row. Cmd/Ctrl adds or removes one. Shift extends
@@ -240,7 +258,7 @@ function LabelPanelImpl({
   };
 
   const toggleCollapse = (classId: string) => {
-    setCollapsed((prev) => {
+    setFlipped((prev) => {
       const next = new Set(prev);
       if (next.has(classId)) next.delete(classId);
       else next.add(classId);
@@ -257,16 +275,9 @@ function LabelPanelImpl({
     return keys;
   }, [grouped, ungrouped.length]); // eslint-disable-line react-hooks/exhaustive-deps
   const allCollapsed =
-    groupKeys.length > 0 && groupKeys.every((k) => collapsed.has(k));
+    groupKeys.length > 0 && groupKeys.every((k) => isCollapsed(k));
   const toggleCollapseAll = () => {
-    setCollapsed((prev) => {
-      if (allCollapsed) {
-        const next = new Set(prev);
-        groupKeys.forEach((k) => next.delete(k));
-        return next;
-      }
-      return new Set([...prev, ...groupKeys]);
-    });
+    setFlipped((prev) => withOpen(prev, groupKeys, allCollapsed));
   };
 
   return (
@@ -532,7 +543,7 @@ function LabelPanelImpl({
         )}
 
         {grouped.map(({ lm, items }) => {
-          const isCollapsed = collapsed.has(lm.canonicalClassId);
+          const groupCollapsed = isCollapsed(lm.canonicalClassId);
           const isHidden = hidden.has(lm.canonicalClassId);
           return (
             <div key={lm.canonicalClassId} style={{ opacity: isHidden ? 0.45 : 1 }}>
@@ -647,7 +658,7 @@ function LabelPanelImpl({
                   style={{
                     flexShrink: 0,
                     color: "var(--ae-text-muted)",
-                    transform: isCollapsed ? "rotate(-90deg)" : "rotate(0deg)",
+                    transform: groupCollapsed ? "rotate(-90deg)" : "rotate(0deg)",
                     transition: "transform 0.15s",
                   }}
                 >
@@ -656,7 +667,7 @@ function LabelPanelImpl({
               </div>
 
               {/* Rows */}
-              {!isCollapsed &&
+              {!groupCollapsed &&
                 items.map((ann) => (
                   <AnnotationRow
                     key={ann.id}
@@ -682,7 +693,7 @@ function LabelPanelImpl({
           const unknownHidden =
             ungroupedLabelIds.length > 0 &&
             ungroupedLabelIds.every((id) => hidden.has(id));
-          const unknownCollapsed = collapsed.has(UNGROUPED_KEY);
+          const unknownCollapsed = isCollapsed(UNGROUPED_KEY);
           return (
           <div style={{ opacity: unknownHidden ? 0.45 : 1 }}>
             <div
