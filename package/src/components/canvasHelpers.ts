@@ -82,6 +82,19 @@ export function slugify(str: string): string {
   return str.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "label";
 }
 
+/**
+ * The annotation with its group set, or with the key removed rather than set to
+ * `undefined`, so an ungrouped annotation is shaped exactly as one never grouped.
+ * Returns the same object when nothing changes, so an unchanged row keeps its
+ * identity and its memoised shape does not re-render.
+ */
+function withGroup(annotation: CanonicalAnnotation, group: string | null): CanonicalAnnotation {
+  if ((annotation.group ?? null) === group) return annotation;
+  if (group !== null) return { ...annotation, group };
+  const { group: _removed, ...rest } = annotation;
+  return rest;
+}
+
 export function annotationReducer(state: CanonicalAnnotation[], action: import("./canvasConstants").Action): CanonicalAnnotation[] {
   switch (action.type) {
     case "LOAD": return action.payload;
@@ -99,6 +112,13 @@ export function annotationReducer(state: CanonicalAnnotation[], action: import("
         return { ...a, label: action.label, meta: { ...a.meta, symbolSize: action.symbolSize } };
       });
     }
+    case "SET_GROUP_MANY": {
+      const ids = new Set(action.ids);
+      if (ids.size === 0) return state;
+      return state.map((a) => (ids.has(a.id) ? withGroup(a, action.group) : a));
+    }
+    case "CLEAR_GROUP":
+      return state.map((a) => (a.group === action.group ? withGroup(a, null) : a));
     case "DELETE": return state.filter((a) => a.id !== action.id);
     case "DELETE_MANY": return state.filter((a) => !action.ids.includes(a.id));
     case "MOVE": return state.map((a) =>

@@ -21,6 +21,11 @@ interface Props {
    */
   onRelabel?: (() => void) | undefined;
   /**
+   * Put everything selected into a group. Provided only when grouping is on and
+   * editing is allowed.
+   */
+  onGroup?: (() => void) | undefined;
+  /**
    * Start a comment on the selection. Provided only when commenting is on —
    * the visible path to the comment box, so it is not hotkey-only.
    */
@@ -75,6 +80,7 @@ export function ShapeOpsBar({
   onSendBackward,
   isHollow,
   onRelabel,
+  onGroup,
   onComment,
 }: Props) {
   if (count === 0) return null;
@@ -112,6 +118,19 @@ export function ShapeOpsBar({
           }
           disabled={false}
           onClick={onRelabel}
+        />
+      )}
+
+      {onGroup && (
+        <OpButton
+          label={count > 1 ? `Group (${count})` : "Group"}
+          title={
+            count > 1
+              ? `Put all ${count} selected annotations in one group (G)`
+              : "Put this annotation in a group (G)"
+          }
+          disabled={false}
+          onClick={onGroup}
         />
       )}
 

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import type { CanonicalAnnotation, LabelMap, SymbolSize } from "../types/canonical";
+import type { AnnotationGroup, CanonicalAnnotation, LabelMap, SymbolSize } from "../types/canonical";
 import { LabelPopover } from "./LabelPopover";
 import { formatSymbolSizeLabel, parseSymbolSize } from "../utils/symbolSize";
 import {
@@ -44,6 +44,16 @@ interface Props {
    * open them. Default: false
    */
   groupsCollapsed?: boolean;
+  /**
+   * The canvas's annotation groups, when grouping is on; undefined when it is
+   * off, which hides every trace of groups. Not to be confused with the class
+   * sections this panel calls groups internally.
+   */
+  annotationGroups?: AnnotationGroup[] | undefined;
+  onGroupSelect?: ((groupId: string) => void) | undefined;
+  onGroupRename?: ((groupId: string, name: string) => void) | undefined;
+  onGroupRecolor?: ((groupId: string, color: string) => void) | undefined;
+  onGroupDelete?: ((groupId: string) => void) | undefined;
   /** When both dpi and drawing scale are set, calculated sizes appear in the list. */
   dimensionContext?: { dpi: number; drawingScale: DrawingScaleInput };
 }
@@ -66,7 +76,23 @@ function LabelPanelImpl({
   height,
   dimensionContext,
   groupsCollapsed = false,
+  annotationGroups,
+  onGroupSelect,
+  onGroupRename,
+  onGroupRecolor,
+  onGroupDelete,
 }: Props) {
+  const annotationGroupById = useMemo(
+    () => new Map((annotationGroups ?? []).map((g) => [g.id, g])),
+    [annotationGroups],
+  );
+  const annotationGroupCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const ann of annotations) {
+      if (ann.group !== undefined) counts.set(ann.group, (counts.get(ann.group) ?? 0) + 1);
+    }
+    return counts;
+  }, [annotations]);
   /*
    * The groups the user has flipped away from the default. Stored as a
    * difference rather than as the collapsed set, so that with `groupsCollapsed`
@@ -529,6 +555,18 @@ function LabelPanelImpl({
           scrollbarColor: "var(--ae-border) transparent",
         }}
       >
+        {annotationGroups && annotationGroups.length > 0 && (
+          <GroupsSection
+            groups={annotationGroups}
+            counts={annotationGroupCounts}
+            readonly={readonly}
+            onSelect={onGroupSelect}
+            onRename={onGroupRename}
+            onRecolor={onGroupRecolor}
+            onDelete={onGroupDelete}
+          />
+        )}
+
         {grouped.length === 0 && ungrouped.length === 0 && (
           <div
             style={{
@@ -672,6 +710,7 @@ function LabelPanelImpl({
                   <AnnotationRow
                     key={ann.id}
                     ann={ann}
+              annotationGroup={ann.group === undefined ? undefined : annotationGroupById.get(ann.group)}
                     isSelected={selectedIds.includes(ann.id)}
                     isHovered={hoveredRow === ann.id}
                     readonly={readonly}
@@ -784,6 +823,7 @@ function LabelPanelImpl({
               <AnnotationRow
                 key={ann.id}
                 ann={ann}
+              annotationGroup={ann.group === undefined ? undefined : annotationGroupById.get(ann.group)}
                 isSelected={selectedIds.includes(ann.id)}
                 isHovered={hoveredRow === ann.id}
                 readonly={readonly}
@@ -840,8 +880,183 @@ function LabelPanelImpl({
   );
 }
 
+/**
+ * The groups on this image, above the class sections: what each is called, its
+ * colour, how many annotations are in it, and the four things done to one.
+ *
+ * Renaming is a double click, the same gesture that renames anywhere else in a
+ * list, and the field swallows its keys so typing a name never fires a canvas
+ * shortcut. Deleting a group ungroups its members and deletes nothing else,
+ * which is why it asks for no confirmation: it is one undo step.
+ */
+function GroupsSection({
+  groups,
+  counts,
+  readonly,
+  onSelect,
+  onRename,
+  onRecolor,
+  onDelete,
+}: {
+  groups: AnnotationGroup[];
+  counts: ReadonlyMap<string, number>;
+  readonly: boolean;
+  onSelect?: ((groupId: string) => void) | undefined;
+  onRename?: ((groupId: string, name: string) => void) | undefined;
+  onRecolor?: ((groupId: string, color: string) => void) | undefined;
+  onDelete?: ((groupId: string) => void) | undefined;
+}) {
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [draftName, setDraftName] = useState("");
+  const [open, setOpen] = useState(true);
+
+  const commitRename = (groupId: string) => {
+    onRename?.(groupId, draftName);
+    setRenaming(null);
+  };
+
+  return (
+    <div style={{ borderBottom: "1px solid var(--ae-border)" }}>
+      <div
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "6px 12px",
+          cursor: "pointer",
+          fontSize: 10,
+          textTransform: "uppercase",
+          letterSpacing: "0.08em",
+          color: "var(--ae-text-secondary)",
+          fontWeight: 600,
+        }}
+      >
+        <span style={{ flex: 1 }}>Groups</span>
+        <span style={{ fontVariantNumeric: "tabular-nums", color: "var(--ae-text-muted)" }}>{groups.length}</span>
+        <svg
+          width="8"
+          height="8"
+          viewBox="0 0 8 8"
+          fill="none"
+          style={{ transform: open ? "rotate(0deg)" : "rotate(-90deg)", transition: "transform 0.15s" }}
+        >
+          <path d="M1 2.5L4 5.5L7 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </div>
+      {open &&
+        groups.map((group) => (
+          <div
+            key={group.id}
+            data-group-id={group.id}
+            style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 12px 4px 14px", minHeight: 26 }}
+          >
+            <label
+              title={readonly ? group.color : "Change the group's colour"}
+              style={{
+                position: "relative",
+                width: 12,
+                height: 12,
+                borderRadius: 3,
+                background: group.color,
+                flexShrink: 0,
+                cursor: readonly || !onRecolor ? "default" : "pointer",
+                border: "1px solid rgba(255,255,255,0.25)",
+              }}
+            >
+              {!readonly && onRecolor && (
+                <input
+                  type="color"
+                  aria-label={`Colour of group ${group.name}`}
+                  value={group.color.toLowerCase()}
+                  onChange={(e) => onRecolor(group.id, e.target.value)}
+                  style={{ position: "absolute", inset: 0, opacity: 0, width: "100%", height: "100%", cursor: "pointer", border: 0, padding: 0 }}
+                />
+              )}
+            </label>
+            {renaming === group.id ? (
+              <input
+                autoFocus
+                value={draftName}
+                onChange={(e) => setDraftName(e.target.value)}
+                onBlur={() => commitRename(group.id)}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  if (e.key === "Enter") commitRename(group.id);
+                  else if (e.key === "Escape") setRenaming(null);
+                }}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  background: "var(--ae-bg-elevated)",
+                  border: "1px solid var(--ae-accent)",
+                  borderRadius: 3,
+                  padding: "1px 4px",
+                  color: "var(--ae-text-primary)",
+                  fontSize: 12,
+                  outline: "none",
+                  fontFamily: "inherit",
+                }}
+              />
+            ) : (
+              <span
+                title={readonly || !onRename ? group.name : "Double-click to rename"}
+                onDoubleClick={() => {
+                  if (readonly || !onRename) return;
+                  setDraftName(group.name);
+                  setRenaming(group.id);
+                }}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  fontSize: 12,
+                  color: "var(--ae-text-primary)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {group.name}
+              </span>
+            )}
+            <span style={{ fontSize: 11, color: "var(--ae-text-muted)", fontVariantNumeric: "tabular-nums" }}>
+              {counts.get(group.id) ?? 0}
+            </span>
+            {onSelect && (
+              <button
+                type="button"
+                title={`Select every annotation in ${group.name}`}
+                onClick={() => onSelect(group.id)}
+                style={actionBtn}
+              >
+                <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
+                  <rect x="2" y="2" width="12" height="12" rx="1.5" stroke="currentColor" strokeWidth="1.5" strokeDasharray="2.5 2" />
+                  <circle cx="8" cy="8" r="2" fill="currentColor" />
+                </svg>
+              </button>
+            )}
+            {!readonly && onDelete && (
+              <button
+                type="button"
+                title={`Delete the group ${group.name}. Its annotations stay, ungrouped.`}
+                onClick={() => onDelete(group.id)}
+                style={{ ...actionBtn, color: "var(--ae-danger)" }}
+              >
+                <svg width="10" height="10" viewBox="0 0 16 16" fill="none">
+                  <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                </svg>
+              </button>
+            )}
+          </div>
+        ))}
+    </div>
+  );
+}
+
 interface AnnotationRowProps {
   ann: CanonicalAnnotation;
+  /** The group this row's annotation is in, when grouping is on and it has one. */
+  annotationGroup?: AnnotationGroup | undefined;
   isSelected: boolean;
   isHovered: boolean;
   readonly: boolean;
@@ -857,6 +1072,7 @@ interface AnnotationRowProps {
 
 function AnnotationRow({
   ann,
+  annotationGroup,
   isSelected,
   isHovered,
   readonly,
@@ -936,6 +1152,27 @@ function AnnotationRow({
         >
           #{shortId(ann.id)}
         </span>
+
+        {annotationGroup && (
+          <span
+            title={`In group ${annotationGroup.name}`}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 3,
+              maxWidth: 72,
+              fontSize: 9,
+              color: "var(--ae-text-secondary)",
+              flexShrink: 1,
+              minWidth: 0,
+            }}
+          >
+            <span style={{ width: 6, height: 6, borderRadius: 1, background: annotationGroup.color, flexShrink: 0 }} />
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {annotationGroup.name}
+            </span>
+          </span>
+        )}
 
         <span
           style={{

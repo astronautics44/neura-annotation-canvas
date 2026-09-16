@@ -2,9 +2,29 @@
 
 All notable changes to `@astronautics44/neura-annotation-canvas`.
 
-## 2.1.1
+## 2.2.0
+
+Two additions for drawings carrying many classes and many marks: grouping marks
+by where they are rather than what they are, and a panel that can open folded.
 
 ### Added
+
+- **Annotation groups**, behind `enableGroups` (default `false`). Select any mix
+  of shapes and labels, on the canvas or in the list, press `G` or **Group (n)**
+  on the selection bar, and pick a group or type the name of a new one. A
+  group's colour replaces the label colour of every member, on the canvas and
+  in the list. The annotations panel gains a **Groups** section: rename in place
+  (double-click), recolour, select every member, delete (members are ungrouped,
+  never deleted). An annotation is in at most one group.
+  - `CanonicalAnnotation.group?: string` and `AnnotationGroup { id, name, color }`
+    are new in `canonical.ts`. Both are additive; nothing reads them unless
+    grouping is on.
+  - `groups` (initial state, like `annotations`), `onGroupsChange(groups)`, and a
+    second argument to `onSave(annotations, groups)`. A one-argument `onSave`
+    keeps working.
+  - Every group action is one undo step, and undo restores the group list with
+    the annotations: undoing a group's creation removes the group and its
+    membership together.
 
 - **`annotationGroupsCollapsed`**, optional, default `false`. Starts every class
   group in the annotations panel collapsed, including one created later, so a

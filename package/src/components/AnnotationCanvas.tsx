@@ -13,11 +13,12 @@ import type { KonvaEventObject } from "konva/lib/Node";
 import type { Stage as StageType } from "konva/lib/Stage";
 import { Stage, Layer, Image as KonvaImage, Rect, Line, Circle, Ellipse, Group, Text } from "react-konva";
 import useImage from "use-image";
-import type { CanonicalAnnotation, LabelMap, SymbolSize, ToolType } from "../types/canonical";
+import type { AnnotationGroup, CanonicalAnnotation, LabelMap, SymbolSize, ToolType } from "../types/canonical";
 import type { CommentAnchor, CommentDraft, CommentTarget, CommentUndoOp } from "../types/comments";
 import type { ThemeVars } from "../theme";
 import { resolveTheme, themeToCssVars } from "../theme";
 import { newId } from "../utils/ids";
+import { GroupPopover } from "./GroupPopover";
 import { formatSymbolSize, parseSymbolSize } from "../utils/symbolSize";
 import { formatAnnotationCalculatedSize } from "../utils/dimensions";
 import type { DrawingScale } from "../utils/drawingScale";
@@ -61,6 +62,10 @@ import {
 
 export type { DrawingScale } from "../utils/drawingScale";
 
+/** How close together two recolours of one group must be to share an undo step. */
+const RECOLOR_STEP_MS = 1500;
+/** Where the group popover opens: just under the selection bar, in screen pixels. */
+const GROUP_POPOVER_TOP = 48;
 /** Fallback when a mark names a class the label map does not carry. */
 const DEFAULT_SHAPE_COLOR = "#ffffff";
 /** In-progress drawing overlay, in screen pixels. */
@@ -85,7 +90,11 @@ interface Props {
 
   // --- data ---
   annotations?: CanonicalAnnotation[];
-  onSave: (annotations: CanonicalAnnotation[]) => void;
+  /**
+   * `groups` is the group list as it stands, and is always passed. A handler
+   * taking only the annotations keeps working.
+   */
+  onSave: (annotations: CanonicalAnnotation[], groups: AnnotationGroup[]) => void;
   onChange?: (annotations: CanonicalAnnotation[]) => void;
   /**
    * Fires with the full label registry whenever the user creates a class from
@@ -223,6 +232,22 @@ interface Props {
    */
   annotationGroupsCollapsed?: boolean;
   /**
+   * Let the user put annotations into named, coloured groups: select any mix of
+   * shapes and labels, press `G` or **Group** on the selection bar, and pick or
+   * name a group. A member is drawn in its group's colour instead of its label's.
+   * The annotations panel lists the groups, where they are renamed, recoloured,
+   * selected and deleted. Membership rides on `CanonicalAnnotation.group`.
+   * Default: false, and nothing about groups appears without it.
+   */
+  enableGroups?: boolean;
+  /**
+   * The groups to start with. Initial state, exactly like `annotations`: copied
+   * in, owned by the canvas afterwards, and replaced when a new array arrives.
+   */
+  groups?: AnnotationGroup[];
+  /** Fires with the whole group list after any group is created, renamed, recoloured or deleted. */
+  onGroupsChange?: (groups: AnnotationGroup[]) => void;
+  /**
    * When label chips are visible on annotations.
    * - "always"         — always shown when zoom ≥ 30% (default)
    * - "hover"          — only while the cursor is over the annotation
@@ -355,7 +380,7 @@ type PendingShapePhase = (typeof PENDING_SHAPE_PHASES)[number];
  * actually did things.
  */
 type HistoryStep =
-  | { kind: "annotations"; snapshot: CanonicalAnnotation[] }
+  | { kind: "annotations"; snapshot: CanonicalAnnotation[]; groups: AnnotationGroup[] }
   | { kind: "comment"; back: CommentUndoOp; forward: CommentUndoOp };
 
 /** Stable empty set, so the "no class filter" case never changes identity. */
@@ -407,6 +432,9 @@ export function AnnotationCanvas({
   showFullscreen = true,
   showAnnotationsPanel = true,
   annotationGroupsCollapsed = false,
+  enableGroups = false,
+  groups: initialGroups,
+  onGroupsChange,
   labelVisibility = "always",
   labelDisplayMode = "chip",
   polylineFinishAction = "enter",
@@ -443,6 +471,9 @@ export function AnnotationCanvas({
   useEffect(() => { setLabels(labelsProp); }, [labelsProp]);
 
   const [annotations, dispatch] = useReducer(annotationReducer, initialAnnotations ?? []);
+  const [annotationGroups, setAnnotationGroups] = useState<AnnotationGroup[]>(initialGroups ?? []);
+  const annotationGroupsRef = useRef(annotationGroups);
+  annotationGroupsRef.current = annotationGroups;
 
   // Undo/redo history (refs — don't need to trigger renders)
   const past = useRef<HistoryStep[]>([]);
@@ -807,10 +838,15 @@ export function AnnotationCanvas({
    * separating those two is the length of this array.
    */
   const [relabelIds, setRelabelIds] = useState<string[]>([]);
+  /** The annotations the group popover is about to act on; empty when it is closed. */
+  const [groupingIds, setGroupingIds] = useState<string[]>([]);
 
   // Snapshot current state before a mutating action (for undo)
   const snapshot = useCallback(() => {
-    past.current = [...past.current, { kind: "annotations", snapshot: [...annotationsRef.current] }];
+    past.current = [
+      ...past.current,
+      { kind: "annotations", snapshot: [...annotationsRef.current], groups: annotationGroupsRef.current },
+    ];
     future.current = [];
     if (past.current.length > 100) past.current = past.current.slice(-100);
     setCanUndo(true);
@@ -826,6 +862,28 @@ export function AnnotationCanvas({
   useEffect(() => {
     onChange?.(annotations);
   }, [annotations]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /*
+   * Not on mount: the consumer handed this list in and has nothing to learn from
+   * hearing it back, and a draft that compares against what it sent would read
+   * the echo as an unsaved change.
+   */
+  const groupsAnnounced = useRef(false);
+  useEffect(() => {
+    if (!groupsAnnounced.current) {
+      groupsAnnounced.current = true;
+      return;
+    }
+    onGroupsChange?.(annotationGroups);
+  }, [annotationGroups]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The same echo guard as `annotations` below: a consumer feeding
+  // `onGroupsChange` straight back must not reload what it was just given.
+  useEffect(() => {
+    if (initialGroups && initialGroups !== annotationGroupsRef.current) {
+      setAnnotationGroups(initialGroups);
+    }
+  }, [initialGroups]);
 
   useEffect(() => {
     // Skip reloading when the incoming prop is the very array this component
@@ -932,8 +990,12 @@ export function AnnotationCanvas({
       // annotation edit the user was not thinking about.
       onCommentUndoRef.current?.(step.back);
     } else {
-      future.current = [{ kind: "annotations", snapshot: annotationsRef.current }, ...future.current];
+      future.current = [
+        { kind: "annotations", snapshot: annotationsRef.current, groups: annotationGroupsRef.current },
+        ...future.current,
+      ];
       dispatch({ type: "LOAD", payload: step.snapshot });
+      setAnnotationGroups(step.groups);
     }
 
     setCanUndo(past.current.length > 0);
@@ -949,8 +1011,12 @@ export function AnnotationCanvas({
       past.current = [...past.current, step];
       onCommentUndoRef.current?.(step.forward);
     } else {
-      past.current = [...past.current, { kind: "annotations", snapshot: annotationsRef.current }];
+      past.current = [
+        ...past.current,
+        { kind: "annotations", snapshot: annotationsRef.current, groups: annotationGroupsRef.current },
+      ];
       dispatch({ type: "LOAD", payload: step.snapshot });
+      setAnnotationGroups(step.groups);
     }
 
     setCanUndo(true);
@@ -1099,7 +1165,7 @@ export function AnnotationCanvas({
       if ((e.metaKey || e.ctrlKey) && e.key === "0") { e.preventDefault(); fitToScreen(); return; }
       if ((e.metaKey || e.ctrlKey) && e.key === "=") { e.preventDefault(); zoomBy(KEY_ZOOM_STEP); return; }
       if ((e.metaKey || e.ctrlKey) && e.key === "-") { e.preventDefault(); zoomBy(1 / KEY_ZOOM_STEP); return; }
-      if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); onSave(annotationsRef.current); return; }
+      if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); onSave(annotationsRef.current, annotationGroupsRef.current); return; }
 
       // Pinned class: 1–9 pins the nth label, 0 unpins
       if (enableActiveLabel && !readonly && !e.metaKey && !e.ctrlKey && !e.altKey && /^[0-9]$/.test(e.key)) {
@@ -1133,7 +1199,7 @@ export function AnnotationCanvas({
         return;
       }
       if (e.key === "Escape") {
-        setMarquee(null); setPanMode(false); setTool("select"); setDraw({ phase: "idle" }); setRelabelIds([]);
+        setMarquee(null); setPanMode(false); setTool("select"); setDraw({ phase: "idle" }); setRelabelIds([]); setGroupingIds([]);
         setDraftComment(null);
         if (enableComments && activeCommentId) selectComment(null, null);
         return;
@@ -1179,6 +1245,13 @@ export function AnnotationCanvas({
         return;
       }
 
+      // Group: G with a selection, the same shape as R.
+      if ((e.key === "g" || e.key === "G") && !e.metaKey && !e.ctrlKey && selectedIds.length >= 1 && draw.phase === "idle" && enableGroups && !readonly) {
+        e.preventDefault();
+        setGroupingIds(selectedIds);
+        return;
+      }
+
       if (e.key === "Enter" && draw.phase === "polygon-drawing" && draw.pts.length >= 3) {
         const pos = draw.pts[draw.pts.length - 1] ?? [0, 0];
         setDraw({ phase: "polygon-pending", pts: draw.pts, pos: pos as [number, number] });
@@ -1201,7 +1274,7 @@ export function AnnotationCanvas({
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp); };
-  }, [draw, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelIds, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction, hiddenClasses, labels, setActiveLabel, enableActiveLabel, tool, enableComments, activeCommentId, beginComment, deleteComment, selectComment, onCommentDelete, pendingComment, cancelComment]);
+  }, [draw, enableGroups, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelIds, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction, hiddenClasses, labels, setActiveLabel, enableActiveLabel, tool, enableComments, activeCommentId, beginComment, deleteComment, selectComment, onCommentDelete, pendingComment, cancelComment]);
 
   // ---------------------------------------------------------------------------
   // Stage event handlers
@@ -1812,6 +1885,82 @@ export function AnnotationCanvas({
 
   const createLabel = readonly ? undefined : handleCreateLabel;
 
+  // ── Groups ──
+
+  const groupColorById = useMemo(
+    () => new Map(enableGroups ? annotationGroups.map((g) => [g.id, g.color]) : []),
+    [enableGroups, annotationGroups],
+  );
+  /** A member's group colour, or undefined to fall back to its label's. */
+  const groupColorOf = (ann: CanonicalAnnotation): string | undefined =>
+    ann.group === undefined ? undefined : groupColorById.get(ann.group);
+
+  const groupMemberCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const ann of annotations) {
+      if (ann.group !== undefined) counts.set(ann.group, (counts.get(ann.group) ?? 0) + 1);
+    }
+    return counts;
+  }, [annotations]);
+
+  /** Move annotations into a group, or out of every group with `null`. One undo step. */
+  const assignGroup = useCallback((ids: string[], groupId: string | null) => {
+    if (ids.length === 0) return;
+    dispatchAndNotify({ type: "SET_GROUP_MANY", ids, group: groupId });
+  }, [dispatchAndNotify]);
+
+  /**
+   * A new group, with these annotations in it, as one undo step. Its colour is
+   * the first of the palette no group on this image uses yet.
+   */
+  const createGroup = useCallback((name: string, ids: string[]) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    snapshot();
+    const used = new Set(annotationGroupsRef.current.map((g) => g.color.toLowerCase()));
+    const color =
+      AUTO_COLORS.find((c) => !used.has(c.toLowerCase())) ??
+      AUTO_COLORS[annotationGroupsRef.current.length % AUTO_COLORS.length]!;
+    const group: AnnotationGroup = { id: newId(), name: trimmed, color };
+    setAnnotationGroups((prev) => [...prev, group]);
+    if (ids.length > 0) dispatch({ type: "SET_GROUP_MANY", ids, group: group.id });
+  }, [snapshot]);
+
+  const renameGroup = useCallback((id: string, name: string) => {
+    const trimmed = name.trim();
+    const current = annotationGroupsRef.current.find((g) => g.id === id);
+    if (!trimmed || !current || current.name === trimmed) return;
+    snapshot();
+    setAnnotationGroups((prev) => prev.map((g) => (g.id === id ? { ...g, name: trimmed } : g)));
+  }, [snapshot]);
+
+  /*
+   * A colour picker reports every position the pointer passes through. One drag
+   * across the picker is one decision, so it is one undo step: a change to the
+   * same group within a moment of the last one joins the step already taken.
+   */
+  const lastRecolor = useRef<{ id: string; at: number } | null>(null);
+  const recolorGroup = useCallback((id: string, color: string) => {
+    const now = Date.now();
+    const last = lastRecolor.current;
+    if (!last || last.id !== id || now - last.at > RECOLOR_STEP_MS) snapshot();
+    lastRecolor.current = { id, at: now };
+    setAnnotationGroups((prev) => prev.map((g) => (g.id === id ? { ...g, color } : g)));
+  }, [snapshot]);
+
+  /** Delete a group and ungroup its members. No annotation is deleted. One undo step. */
+  const deleteGroup = useCallback((id: string) => {
+    snapshot();
+    setAnnotationGroups((prev) => prev.filter((g) => g.id !== id));
+    dispatch({ type: "CLEAR_GROUP", group: id });
+  }, [snapshot]);
+
+  const selectGroupMembers = useCallback((id: string) => {
+    setSelectedIds(annotationsRef.current.filter((a) => a.group === id).map((a) => a.id));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const groupingEnabled = enableGroups && !readonly;
+
   /*
    * The annotations panel's handlers, held stable so the panel can be memoised.
    *
@@ -2006,7 +2155,7 @@ export function AnnotationCanvas({
       <AnnotationShape
         key={ann.id}
         ann={ann}
-        color={lm?.color ?? DEFAULT_SHAPE_COLOR}
+        color={groupColorOf(ann) ?? lm?.color ?? DEFAULT_SHAPE_COLOR}
         displayName={lm?.displayName ?? ann.label}
         isSelected={isSelected}
         isHovered={hoveredId === ann.id}
@@ -2203,6 +2352,7 @@ export function AnnotationCanvas({
               readonly={readonly}
               isHollow={singleIsHollow}
               onRelabel={readonly ? undefined : () => setRelabelIds(selectedIds)}
+              onGroup={groupingEnabled ? () => setGroupingIds(selectedIds) : undefined}
               onMerge={handleMerge}
               onSubtract={handleSubtract}
               onIntersect={handleIntersect}
@@ -2282,7 +2432,7 @@ export function AnnotationCanvas({
               <CommentComposer
                 position={screen}
                 targetLabel={ann ? lm?.displayName ?? ann.label : "the drawing"}
-                {...(ann && lm ? { targetColor: lm.color } : {})}
+                {...(ann && (groupColorOf(ann) ?? lm?.color) ? { targetColor: (groupColorOf(ann) ?? lm?.color)! } : {})}
                 onSubmit={submitComment}
                 onCancel={cancelComment}
               />
@@ -2311,6 +2461,30 @@ export function AnnotationCanvas({
               }
               onCancel={() => setLabelPickerOpen(false)}
               onCreateLabel={createLabel}
+            />
+          )}
+          {groupingEnabled && groupingIds.length > 0 && (
+            <GroupPopover
+              groups={annotationGroups}
+              memberCounts={groupMemberCounts}
+              count={groupingIds.length}
+              canRemove={annotations.some(
+                (a) => groupingIds.includes(a.id) && a.group !== undefined,
+              )}
+              position={{ x: containerSize.w / 2, y: GROUP_POPOVER_TOP }}
+              onPick={(groupId) => {
+                assignGroup(groupingIds, groupId);
+                setGroupingIds([]);
+              }}
+              onCreate={(name) => {
+                createGroup(name, groupingIds);
+                setGroupingIds([]);
+              }}
+              onRemove={() => {
+                assignGroup(groupingIds, null);
+                setGroupingIds([]);
+              }}
+              onCancel={() => setGroupingIds([])}
             />
           )}
           {relabelPos && !pPos && (() => {
@@ -2356,6 +2530,11 @@ export function AnnotationCanvas({
           onRelabel={applyRelabel}
           onRelabelMany={applyRelabelMany}
           groupsCollapsed={annotationGroupsCollapsed}
+          annotationGroups={enableGroups ? annotationGroups : undefined}
+          onGroupSelect={enableGroups ? selectGroupMembers : undefined}
+          onGroupRename={groupingEnabled ? renameGroup : undefined}
+          onGroupRecolor={groupingEnabled ? recolorGroup : undefined}
+          onGroupDelete={groupingEnabled ? deleteGroup : undefined}
         />
         )}
       </div>
