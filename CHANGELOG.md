@@ -2,6 +2,25 @@
 
 All notable changes to `@astronautics44/neura-annotation-canvas`.
 
+## 2.2.1
+
+The Groups section of the annotations panel works like the class sections below
+it. No prop or type changed.
+
+### Changed
+
+- **A group lists its members**, collapsible with its own chevron, and follows
+  `annotationGroupsCollapsed` and **Collapse all** like a class does.
+- **Clicking a group's name selects every member** and pans them into view. The
+  separate select button is gone.
+- **A pencil beside the name renames the group.** Double-clicking the name still
+  works.
+- **A member row names its class, with an arrow.** Clicking it selects only that
+  annotation, opens its class and scrolls the list to it there. Clicking the
+  group's name selects the whole group again.
+- **A class's colour swatch is the size of a group's** (12px, was 8px), so class
+  colours are as easy to tell apart as group colours.
+
 ## 2.2.0
 
 Two additions for drawings carrying many classes and many marks: grouping marks

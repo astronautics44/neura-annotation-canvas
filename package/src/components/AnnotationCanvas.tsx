@@ -224,10 +224,11 @@ interface Props {
    */
   showAnnotationsPanel?: boolean;
   /**
-   * Start every class group in the annotations panel collapsed, so a drawing
-   * with many classes opens on a list of class headers rather than on every
-   * row. A group that appears later starts collapsed too. The group chevrons,
-   * "collapse all" and selecting a shape on the canvas still open them.
+   * Start every class section in the annotations panel collapsed, and every
+   * annotation group when grouping is on, so a drawing with many classes opens
+   * on a list of headers rather than on every row. One that appears later starts
+   * collapsed too. The chevrons, "collapse all" and selecting a shape on the
+   * canvas still open them.
    * Default: false
    */
   annotationGroupsCollapsed?: boolean;
@@ -1956,7 +1957,9 @@ export function AnnotationCanvas({
   }, [snapshot]);
 
   const selectGroupMembers = useCallback((id: string) => {
-    setSelectedIds(annotationsRef.current.filter((a) => a.group === id).map((a) => a.id));
+    const ids = annotationsRef.current.filter((a) => a.group === id).map((a) => a.id);
+    setSelectedIds(ids);
+    revealRef.current(ids);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const groupingEnabled = enableGroups && !readonly;
