@@ -18,6 +18,8 @@ it. No prop or type changed.
 - **A member row names its class, with an arrow.** Clicking it selects only that
   annotation, opens its class and scrolls the list to it there. Clicking the
   group's name selects the whole group again.
+- **A class's colour swatch is the size of a group's** (12px, was 8px), so class
+  colours are as easy to tell apart as group colours.
 
 ## 2.2.0
 

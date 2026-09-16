@@ -677,14 +677,16 @@ function LabelPanelImpl({
                   userSelect: "none",
                 }}
               >
-                {/* Color swatch */}
+                {/* Color swatch, the size of a group's so a class colour reads as easily */}
                 <span
                   style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 2,
+                    width: 12,
+                    height: 12,
+                    borderRadius: 3,
                     background: lm.color,
                     flexShrink: 0,
+                    boxSizing: "border-box",
+                    border: "1px solid rgba(255,255,255,0.25)",
                   }}
                 />
                 <span
@@ -1059,6 +1061,7 @@ function GroupsSection({
                   onClick={(e) => e.stopPropagation()}
                   style={{
                     position: "relative",
+                    boxSizing: "border-box",
                     width: 12,
                     height: 12,
                     borderRadius: 3,
