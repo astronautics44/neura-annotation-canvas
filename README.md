@@ -182,7 +182,7 @@ interface AnnotationCanvasProps {
   enableSelectAll?: boolean;  // Ctrl/Cmd+A selects all annotations
   showFullscreen?: boolean;   // fullscreen toggle button in the status bar
   showAnnotationsPanel?: boolean; // annotations list panel on the right
-  annotationGroupsCollapsed?: boolean; // start every class group in the panel collapsed; default: false
+  annotationGroupsCollapsed?: boolean; // start every class and annotation group in the panel collapsed; default: false
   enableGroups?: boolean; // named, coloured groups of annotations; default: false
   groups?: AnnotationGroup[]; // initial groups, like annotations
   onGroupsChange?: (groups: AnnotationGroup[]) => void;
@@ -1309,10 +1309,16 @@ the canvas and on its row.
 |---|---|
 | `G`, or **Group (n)** on the selection bar | Opens the group popover for the selection: pick a group, or type a name that matches none to create it |
 | **Remove from group** in that popover | Ungroups the selected annotations |
-| Double-click a name in the panel's **Groups** section | Rename |
-| The swatch beside it | Recolour |
-| The select button | Selects every member |
+| Click a group's name in the panel's **Groups** section | Selects every member, on the canvas and in the list |
+| The pencil beside it, or double-click the name | Rename |
+| The swatch | Recolour |
 | The ✕ | Deletes the group; its annotations stay, ungrouped |
+| The chevron | Collapses or expands the group's member list |
+| The class name and arrow on a member row | Selects only that annotation and shows it under its class |
+
+Each group lists its members the way a class lists its own, so a grouped
+annotation appears twice in the panel: under its group, where its row names its
+class, and under its class, where its row names its group.
 
 `groups` is initial state, exactly like `annotations`, and `onGroupsChange` fires
 with the whole list after any change to it (not on mount). Membership changes
@@ -1334,6 +1340,8 @@ open. When `true` the panel opens on a list of class headers with their counts,
 which is what a drawing with dozens of classes and hundreds of marks wants to
 show first. A class that appears later, created from the label popover, starts
 collapsed as well.
+With `enableGroups`, every annotation group in the **Groups** section starts
+collapsed too.
 
 Nothing else about collapsing changes. A group's chevron opens and closes it,
 **Collapse all** in the header folds or unfolds every group, and selecting a
