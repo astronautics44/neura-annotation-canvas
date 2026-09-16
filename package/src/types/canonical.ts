@@ -13,6 +13,22 @@ export interface CanonicalAnnotation {
   confidence?: number;
   source: "engine" | "human";
   meta?: Record<string, unknown>;
+  /**
+   * The `AnnotationGroup` this annotation belongs to, by id. At most one. Read
+   * only when the canvas has `enableGroups`; a value naming no group is ignored.
+   */
+  group?: string;
+}
+
+/**
+ * A named set of annotations on one image, whatever their shape or label: the
+ * switches in a bathroom. Its colour replaces the label colour of every member.
+ */
+export interface AnnotationGroup {
+  id: string;
+  name: string;
+  /** A literal `#rrggbb`: it is painted by Konva, which has no stylesheet. */
+  color: string;
 }
 
 export type SymbolSizeUnit = "mm" | "cm" | "m" | "in" | "ft";

@@ -420,12 +420,15 @@ export default function Page() {
           polygonMinVertexAction={polygonMinVertexAction}
           enableActiveLabel={enableActiveLabel}
           showAnnotationsPanel={showAnnotationsPanel}
+          enableGroups
+          annotationGroupsCollapsed
+          onGroupsChange={(groups) => console.log("[annotation-engine] onGroupsChange", groups)}
           onActiveLabelChange={(id) => console.log("[annotation-engine] onActiveLabelChange", id)}
           dpi={activePreset.dpi > 0 ? activePreset.dpi : undefined}
           drawingScale={activePreset.dpi > 0 ? activePreset.scale : undefined}
           onDrawingScaleChange={(s) => console.log("[annotation-engine] onDrawingScaleChange", s)}
-          onSave={(saved) => {
-            console.log("[annotation-engine] onSave", saved);
+          onSave={(saved, groups) => {
+            console.log("[annotation-engine] onSave", saved, groups);
           }}
           onChange={(all) => {
             // Display-only copy, so the panel can name a shape a thread hangs off.

@@ -183,6 +183,9 @@ interface AnnotationCanvasProps {
   showFullscreen?: boolean;   // fullscreen toggle button in the status bar
   showAnnotationsPanel?: boolean; // annotations list panel on the right
   annotationGroupsCollapsed?: boolean; // start every class group in the panel collapsed; default: false
+  enableGroups?: boolean; // named, coloured groups of annotations; default: false
+  groups?: AnnotationGroup[]; // initial groups, like annotations
+  onGroupsChange?: (groups: AnnotationGroup[]) => void;
 
   // Label chip visibility
   labelVisibility?: "always" | "hover" | "selected" | "hover+selected"; // default: "always"
@@ -1283,6 +1286,42 @@ Shows all annotations grouped by label. Features:
 - When `meta.symbolSize` is set, the row shows the manual dimension (e.g. `diameter - 12mm`)
 - When `dpi` and `drawingScale` are set, each row also shows the computed real-world size below the annotation ID (e.g. `4.25m` for a line, `0.90m×2.10m · 1.89m²` for a bbox, `14.2m²` for a polygon, `⌀0.60m · 0.28m²` for a circle)
 - Bounded shapes (bbox, polygon, circle) also show their perimeter on a `P` line beneath the size (e.g. `P 6.20m`). Read the same numbers programmatically with [`measure`](#measure--area--perimeter-readout).
+
+### Annotation groups — `enableGroups`
+
+```tsx
+<AnnotationCanvas
+  enableGroups
+  groups={storedGroups}                 // AnnotationGroup[]: { id, name, color }
+  onGroupsChange={(groups) => setDraftGroups(groups)}
+  onSave={(annotations, groups) => save(annotations, groups)}
+  ...
+/>
+```
+
+A group is a named, coloured set of annotations on this image, whatever their
+shape or label: the switches in a bathroom, a polyline and a polygon in the same
+room. Membership is `annotation.group`, the group's id; an annotation is in at
+most one. **A member is drawn in its group's colour instead of its label's**, on
+the canvas and on its row.
+
+| Gesture | Effect |
+|---|---|
+| `G`, or **Group (n)** on the selection bar | Opens the group popover for the selection: pick a group, or type a name that matches none to create it |
+| **Remove from group** in that popover | Ungroups the selected annotations |
+| Double-click a name in the panel's **Groups** section | Rename |
+| The swatch beside it | Recolour |
+| The select button | Selects every member |
+| The ✕ | Deletes the group; its annotations stay, ungrouped |
+
+`groups` is initial state, exactly like `annotations`, and `onGroupsChange` fires
+with the whole list after any change to it (not on mount). Membership changes
+arrive through `onChange` with the annotations. Every group action is one undo
+step and undo restores the group list with the annotations. With `readonly` the
+groups and their colours are shown and nothing can be changed.
+
+A new group takes the first colour of the canvas's palette that no group on the
+image uses; consumers that want their own palette recolour on `onGroupsChange`.
 
 ### Starting with every group collapsed — `annotationGroupsCollapsed`
 

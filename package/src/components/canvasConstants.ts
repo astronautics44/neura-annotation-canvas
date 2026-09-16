@@ -60,6 +60,10 @@ export type Action =
    * was left blank would be the wrong default.
    */
   | { type: "RELABEL_MANY"; ids: string[]; label: string; symbolSize?: import("../types/canonical").SymbolSize }
+  /** Put these annotations in one group, or take them out of any with `null`. */
+  | { type: "SET_GROUP_MANY"; ids: string[]; group: string | null }
+  /** Take every member out of a group that is being deleted. */
+  | { type: "CLEAR_GROUP"; group: string }
   | { type: "DELETE"; id: string }
   | { type: "DELETE_MANY"; ids: string[] }
   | { type: "MOVE"; id: string; delta: [number, number] }
