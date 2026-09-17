@@ -2,6 +2,33 @@
 
 All notable changes to `@astronautics44/neura-annotation-canvas`.
 
+## 2.2.2
+
+A consumer that has to remount the canvas can keep the view the person was
+looking at. Nothing changes for one that does not.
+
+### Added
+
+- **`initialViewport`** — where the canvas opens, instead of fitting the image to
+  its container. Initial state, like `annotations`: read once at mount, never
+  again. **Passing it also stops the canvas fitting by itself**, on load and on
+  container resize, because the consumer has said where the view belongs.
+- **`onViewportChange`** — where the view landed, once a gesture settles. The
+  other half of `initialViewport`: keep it in a ref, hand it back after a
+  remount.
+- **`Viewport`** is exported. It was already the shape of both of the above
+  (`{ scale, x, y }`), just not reachable from outside.
+
+### Unchanged
+
+Omit both props and this release is behaviourally identical to 2.2.1: the image
+is fitted when it loads and again whenever the container resizes, exactly as
+before. Nothing existing was renamed, removed or given a new default.
+
+**It restores the view and nothing else.** Undo history does not survive a
+remount and is not something a prop can hand back; a consumer that needs the
+stack to live across a save must avoid the remount rather than restore it.
+
 ## 2.2.1
 
 The Groups section of the annotations panel works like the class sections below

@@ -314,6 +314,46 @@ interface Props {
    */
   zoomSpeed?: number;
 
+  // --- viewport ---
+  /**
+   * Where the canvas opens: the zoom and pan to start at, instead of fitting the
+   * image to its container.
+   *
+   * **Initial state, like `annotations`.** Read once, at mount, and never again:
+   * the canvas owns the viewport afterwards, and a consumer that set it later
+   * would be moving the view out from under the person using it. Changing it
+   * does nothing.
+   *
+   * Omit it and nothing about this component changes — the image is fitted when
+   * it loads and again whenever the container resizes, exactly as every version
+   * before this one did.
+   *
+   * **Pass it and the canvas never fits by itself**, on load or on resize. That
+   * is the point: the consumer has said where the view belongs, and a fit would
+   * be this component overruling them.
+   *
+   * What it is for is a consumer that must remount the canvas — a React `key`
+   * changed because a save gave its shapes new ids — and does not want the
+   * person looking at it to lose the corner of the drawing they had zoomed into.
+   * Read the viewport from `onViewportChange`, keep it, hand it back here.
+   *
+   * It restores the view and nothing else. Undo history does not survive a
+   * remount and cannot be handed back.
+   */
+  initialViewport?: Viewport;
+  /**
+   * Fires when the viewport settles, with where it landed.
+   *
+   * Settles rather than continuously: a gesture is painted straight onto the
+   * stage every frame and only written into React state once the events stop, and
+   * this follows the state. A long trackpad pinch calls this once at the end
+   * rather than sixty times on the way.
+   *
+   * Keep it cheap, and prefer a ref to state — it is the other half of
+   * `initialViewport`, which is read at mount, so nothing needs to render from it.
+   */
+  onViewportChange?: (viewport: Viewport) => void;
+
   // --- sticky class ---
   /**
    * Master switch for the pinned-class feature — the chip, the 1–9 / 0 hotkeys,
@@ -446,6 +486,8 @@ export function AnnotationCanvas({
   drawingScale: drawingScaleProp,
   onDrawingScaleChange,
   zoomSpeed = 1,
+  initialViewport,
+  onViewportChange,
   enableActiveLabel = true,
   activeLabel: activeLabelProp,
   defaultActiveLabel,
@@ -545,9 +587,18 @@ export function AnnotationCanvas({
    * in screen pixels sits in a `ScreenSpace` group that `paintViewport` keeps
    * counter-scaled by name.
    */
-  const [viewport, setViewport] = useState<Viewport>(INITIAL_VIEWPORT);
-  const viewportRef = useRef<Viewport>(INITIAL_VIEWPORT);
-  const paintedViewport = useRef<Viewport>(INITIAL_VIEWPORT);
+  const [viewport, setViewport] = useState<Viewport>(initialViewport ?? INITIAL_VIEWPORT);
+  const viewportRef = useRef<Viewport>(initialViewport ?? INITIAL_VIEWPORT);
+  const paintedViewport = useRef<Viewport>(initialViewport ?? INITIAL_VIEWPORT);
+  /*
+   * Whether the consumer is placing the view, decided once at mount.
+   *
+   * A ref rather than reading the prop, because the answer must not change when
+   * the prop does: a consumer that stops passing one mid-life has not asked for
+   * the image to jump back to a fit, and one that starts passing one has not
+   * asked for anything at all — `initialViewport` is initial state.
+   */
+  const viewportIsTheirs = useRef(initialViewport !== undefined);
   const paintFrame = useRef<number | null>(null);
   const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scale = viewport.scale;
@@ -919,7 +970,30 @@ export function AnnotationCanvas({
     applyViewport({ scale: s, x: (containerSize.w - img.width * s) / 2, y: (containerSize.h - img.height * s) / 2 }, "now");
   }, [img, containerSize, applyViewport]);
 
-  useEffect(() => { if (img) fitToScreen(); }, [img, fitToScreen]);
+  /*
+   * Fit the image when it loads, and again whenever the container resizes,
+   * because `fitToScreen` closes over `containerSize`.
+   *
+   * **Unless the consumer placed the view**, in which case this never runs: they
+   * passed `initialViewport`, the state above already opens there, and fitting
+   * would be this component deciding it knows better. That also means a resize
+   * leaves their zoom alone, which is the whole reason a consumer reaches for
+   * the prop.
+   */
+  useEffect(() => {
+    if (viewportIsTheirs.current) return;
+    if (img) fitToScreen();
+  }, [img, fitToScreen]);
+
+  /*
+   * Tell the consumer where the view landed, so they can hand it back through
+   * `initialViewport` after a remount.
+   *
+   * Keyed on the settled state rather than on the ref, so a gesture reports once
+   * when it stops rather than once a frame. Nothing here sets state, so a
+   * consumer writing this into a ref cannot loop.
+   */
+  useEffect(() => { onViewportChange?.(viewport); }, [viewport, onViewportChange]);
 
   /**
    * Bring annotations on screen by panning to their centre, and only when at
