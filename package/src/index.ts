@@ -1,6 +1,7 @@
 export { AnnotationCanvas } from "./components/AnnotationCanvas";
 export type { AnnotationGroup, CanonicalAnnotation, LabelMap, SymbolSize, SymbolSizeUnit, ToolType } from "./types/canonical";
 export type { CommentAnchor, CommentDraft, CommentTarget, CommentUndoOp } from "./types/comments";
+export type { Viewport } from "./components/viewport";
 export type { ThemeVars } from "./theme";
 export { DEFAULT_THEME } from "./theme";
 export { geo } from "./utils/geometry";

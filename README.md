@@ -213,6 +213,10 @@ interface AnnotationCanvasProps {
   drawingScale?: DrawingScale;                        // CV-extracted or user-set drawing scale
   onDrawingScaleChange?: (s: DrawingScale) => void;   // fires when user overrides the scale
 
+  // Viewport — keep the view across a remount; see "Keeping the view"
+  initialViewport?: Viewport;                         // where to open; also stops every auto-fit
+  onViewportChange?: (v: Viewport) => void;           // where it landed, once a gesture settles
+
   // Layout
   className?: string; // applied to the outer container div
 
@@ -639,6 +643,43 @@ draw. Anything sized in screen pixels (count marks, handles, chips, comment
 bubbles) sits in a counter-scaled group rather than dividing by the scale, and
 strokes are drawn with `strokeScaleEnabled` off. The status bar's zoom readout
 therefore trails a gesture by up to 100 ms; the cursor readout does not.
+
+### Keeping the view across a remount
+
+By default the canvas fits the image to its container when the image loads, and
+again whenever the container resizes. That is right until a consumer has to
+**remount** it — a React `key` changed because a save gave the shapes new ids,
+say — because the person reviewing the drawing then loses the corner they had
+zoomed into, which on a large sheet is the most expensive thing you can do to
+them.
+
+`initialViewport` and `onViewportChange` are the two halves of keeping it:
+
+```tsx
+const view = useRef<Viewport | undefined>(undefined);
+
+<AnnotationCanvas
+  key={seed}                          // a remount you cannot avoid
+  {...(view.current ? { initialViewport: view.current } : {})}
+  onViewportChange={(v) => { view.current = v; }}
+  …
+/>
+```
+
+Three things to know before reaching for it:
+
+- **`initialViewport` is initial state, like `annotations`.** It is read once at
+  mount and never again, because the canvas owns the viewport afterwards and a
+  consumer writing to it mid-gesture would be moving the view out from under the
+  person using it. Changing it later does nothing.
+- **Passing it turns off every automatic fit**, on image load and on container
+  resize. That is deliberate: you have said where the view belongs. Omit it on
+  the first mount of a new image and you get the usual fit.
+- **It restores the view and nothing else.** The undo/redo stack does not survive
+  a remount and no prop can hand it back. A consumer that needs undo to live
+  across a save has to avoid the remount, not restore after it.
+
+Omit both props and the component behaves exactly as it did before 2.2.2.
 
 ### Multi-select
 
