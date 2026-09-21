@@ -64,6 +64,8 @@ export type Action =
   | { type: "SET_GROUP_MANY"; ids: string[]; group: string | null }
   /** Take every member out of a group that is being deleted. */
   | { type: "CLEAR_GROUP"; group: string }
+  /** Mark these annotations optional, or not optional with `false`. */
+  | { type: "SET_OPTIONAL_MANY"; ids: string[]; optional: boolean }
   | { type: "DELETE"; id: string }
   | { type: "DELETE_MANY"; ids: string[] }
   | { type: "MOVE"; id: string; delta: [number, number] }

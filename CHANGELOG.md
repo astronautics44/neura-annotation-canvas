@@ -2,6 +2,33 @@
 
 All notable changes to `@astronautics44/neura-annotation-canvas`.
 
+## 2.3.0
+
+Annotations can be marked optional. A contract change, additive: nothing
+existing moved, and a consumer that does not turn it on sees nothing new.
+
+### Added
+
+- **`CanonicalAnnotation.optional`**, `true` or absent. Read and drawn only
+  when the canvas has `enableOptional`.
+- **`enableOptional`**, default `false`. With it on, `O` or **Optional (n)** on
+  the selection bar marks the selection optional, and reads **Not optional**
+  when every selected annotation already is. One undo step and one `onChange`
+  for any selection size.
+- **Optional annotations are drawn dashed** in their label's or group's colour,
+  every shape type; a count mark is a dashed outline. The dash is in screen
+  pixels, applied on the stroke path that already ignores the zoom, so nothing
+  is divided by the scale and the memoised shape gains one boolean prop.
+- **An optional row in the annotations panel carries a dashed Optional tag**,
+  under its class and under its group.
+- `npm test --workspace=package`: the package's first tests, on Node's own
+  runner against the build, covering the reducer half of the toggle.
+
+### Unchanged
+
+Relabelling, bulk class changes, grouping and moving keep the flag.
+`Cmd/Ctrl+Shift+O` is still the hollow toggle; plain `O` was unbound.
+
 ## 2.2.2
 
 A consumer that has to remount the canvas can keep the view the person was

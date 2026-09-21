@@ -54,6 +54,11 @@ interface Props {
   onGroupRename?: ((groupId: string, name: string) => void) | undefined;
   onGroupRecolor?: ((groupId: string, color: string) => void) | undefined;
   onGroupDelete?: ((groupId: string) => void) | undefined;
+  /**
+   * Mark optional rows. Set when the canvas has `enableOptional`; without it
+   * the panel shows nothing about optional marks.
+   */
+  showOptional?: boolean;
   /** When both dpi and drawing scale are set, calculated sizes appear in the list. */
   dimensionContext?: { dpi: number; drawingScale: DrawingScaleInput };
 }
@@ -81,6 +86,7 @@ function LabelPanelImpl({
   onGroupRename,
   onGroupRecolor,
   onGroupDelete,
+  showOptional = false,
 }: Props) {
   const annotationGroupById = useMemo(
     () => new Map((annotationGroups ?? []).map((g) => [g.id, g])),
@@ -619,6 +625,7 @@ function LabelPanelImpl({
                     color: lm?.color ?? UNKNOWN_CLASS_COLOR,
                     onReveal: () => revealInClass(ann.id),
                   }}
+                  isOptional={showOptional && ann.optional === true}
                   isSelected={selectedIds.includes(ann.id)}
                   isHovered={hoveredRow === ann.id}
                   readonly={readonly}
@@ -785,6 +792,7 @@ function LabelPanelImpl({
                     key={ann.id}
                     ann={ann}
                     annotationGroup={ann.group === undefined ? undefined : annotationGroupById.get(ann.group)}
+                    isOptional={showOptional && ann.optional === true}
                     isSelected={selectedIds.includes(ann.id)}
                     isHovered={hoveredRow === ann.id}
                     readonly={readonly}
@@ -898,6 +906,7 @@ function LabelPanelImpl({
                 key={ann.id}
                 ann={ann}
                     annotationGroup={ann.group === undefined ? undefined : annotationGroupById.get(ann.group)}
+                isOptional={showOptional && ann.optional === true}
                 isSelected={selectedIds.includes(ann.id)}
                 isHovered={hoveredRow === ann.id}
                 readonly={readonly}
@@ -1187,6 +1196,8 @@ interface AnnotationRowProps {
    * class it belongs to, and the arrow that jumps to it there.
    */
   classLink?: { name: string; color: string; onReveal: () => void } | undefined;
+  /** Shows the optional tag. The panel sets it only when optional marks are on. */
+  isOptional?: boolean;
   isSelected: boolean;
   isHovered: boolean;
   readonly: boolean;
@@ -1204,6 +1215,7 @@ function AnnotationRow({
   ann,
   annotationGroup,
   classLink,
+  isOptional = false,
   isSelected,
   isHovered,
   readonly,
@@ -1285,6 +1297,23 @@ function AnnotationRow({
         >
           #{shortId(ann.id)}
         </span>
+
+        {isOptional && (
+          <span
+            title="Optional"
+            style={{
+              flexShrink: 0,
+              fontSize: 9,
+              lineHeight: "12px",
+              padding: "0 4px",
+              borderRadius: 3,
+              border: "1px dashed var(--ae-text-secondary)",
+              color: "var(--ae-text-secondary)",
+            }}
+          >
+            Optional
+          </span>
+        )}
 
         {classLink && (
           <button
