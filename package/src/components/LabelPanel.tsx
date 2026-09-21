@@ -4,6 +4,7 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import type { AnnotationGroup, CanonicalAnnotation, LabelMap, SymbolSize } from "../types/canonical";
 import { LabelPopover } from "./LabelPopover";
 import { formatSymbolSizeLabel, parseSymbolSize } from "../utils/symbolSize";
+import { optionalMarks } from "./canvasHelpers";
 import {
   formatAnnotationCalculatedSize,
   formatAnnotationPerimeter,
@@ -59,6 +60,12 @@ interface Props {
    * the panel shows nothing about optional marks.
    */
   showOptional?: boolean;
+  /** Whether optional marks are hidden from the canvas by the Optional section's eye. */
+  optionalHidden?: boolean;
+  /** Hide or show every optional mark. Without it the Optional section has no eye. */
+  onOptionalVisibilityChange?: ((hide: boolean) => void) | undefined;
+  /** Select every optional mark. Without it the section's name selects nothing. */
+  onOptionalSelect?: (() => void) | undefined;
   /** When both dpi and drawing scale are set, calculated sizes appear in the list. */
   dimensionContext?: { dpi: number; drawingScale: DrawingScaleInput };
 }
@@ -87,6 +94,9 @@ function LabelPanelImpl({
   onGroupRecolor,
   onGroupDelete,
   showOptional = false,
+  optionalHidden = false,
+  onOptionalVisibilityChange,
+  onOptionalSelect,
 }: Props) {
   const annotationGroupById = useMemo(
     () => new Map((annotationGroups ?? []).map((g) => [g.id, g])),
@@ -253,6 +263,17 @@ function LabelPanelImpl({
   }, [annotationGroups, annotationGroupById, filteredAnnotations]);
   const visibleGroups = annotationGroups ?? [];
 
+  /*
+   * The Optional section: shown while optional marks are on and any mark is
+   * optional, listing the ones that pass the filter. A flag rather than a
+   * group, so a grouped optional mark is listed under both, and its class.
+   */
+  const hasOptional = showOptional && annotations.some((a) => a.optional === true);
+  const optionalMembers = useMemo(
+    () => (showOptional ? optionalMarks(filteredAnnotations) : EMPTY_MEMBERS),
+    [showOptional, filteredAnnotations],
+  );
+
   // ── Class visibility ──
   const hidden = hiddenClasses ?? EMPTY_SET;
   const presentLabelIds = useMemo(() => {
@@ -289,6 +310,7 @@ function LabelPanelImpl({
     if (isCollapsed(GROUP_KEY_PREFIX + g.id)) return;
     (groupMembers.get(g.id) ?? []).forEach((a) => flatRowIds.push(a.id));
   });
+  if (hasOptional && !isCollapsed(OPTIONAL_KEY)) optionalMembers.forEach((a) => flatRowIds.push(a.id));
   grouped.forEach(({ lm, items }) => {
     if (isCollapsed(lm.canonicalClassId)) return;
     items.forEach((a) => flatRowIds.push(a.id));
@@ -326,6 +348,15 @@ function LabelPanelImpl({
     onGroupSelect(groupId);
   };
 
+  const selectOptional = () => {
+    if (!onOptionalSelect) return;
+    const memberIds = optionalMarks(annotations).map((a) => a.id);
+    const unchanged =
+      memberIds.length === selectedIds.length && memberIds.every((id) => selectedIds.includes(id));
+    keepScroll.current = memberIds.length > 0 && !unchanged;
+    onOptionalSelect();
+  };
+
   /** A group member's arrow: select only that annotation and show it under its class. */
   const revealInClass = (id: string) => {
     rangeAnchor.current = id;
@@ -347,10 +378,11 @@ function LabelPanelImpl({
   // unknown-label bucket and respects the active filter.
   const groupKeys = useMemo(() => {
     const keys = visibleGroups.map((g) => GROUP_KEY_PREFIX + g.id);
+    if (hasOptional) keys.push(OPTIONAL_KEY);
     grouped.forEach((g) => keys.push(g.lm.canonicalClassId));
     if (ungrouped.length > 0) keys.push(UNGROUPED_KEY);
     return keys;
-  }, [visibleGroups, grouped, ungrouped.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [visibleGroups, hasOptional, grouped, ungrouped.length]); // eslint-disable-line react-hooks/exhaustive-deps
   const allCollapsed =
     groupKeys.length > 0 && groupKeys.every((k) => isCollapsed(k));
   const toggleCollapseAll = () => {
@@ -643,6 +675,46 @@ function LabelPanelImpl({
             onRename={onGroupRename}
             onRecolor={onGroupRecolor}
             onDelete={onGroupDelete}
+          />
+        )}
+
+        {hasOptional && (
+          <OptionalSection
+            members={optionalMembers}
+            selectedIds={selectedIds}
+            collapsed={isCollapsed(OPTIONAL_KEY)}
+            hidden={optionalHidden}
+            onToggleCollapse={() => toggleCollapse(OPTIONAL_KEY)}
+            onSelect={onOptionalSelect ? selectOptional : undefined}
+            onToggleHidden={
+              onOptionalVisibilityChange ? () => onOptionalVisibilityChange(!optionalHidden) : undefined
+            }
+            renderMember={(ann) => {
+              const lm = labels.find((l) => l.canonicalClassId === ann.label);
+              return (
+                <AnnotationRow
+                  key={ann.id}
+                  ann={ann}
+                  annotationGroup={ann.group === undefined ? undefined : annotationGroupById.get(ann.group)}
+                  classLink={{
+                    name: lm?.displayName ?? ann.label,
+                    color: lm?.color ?? UNKNOWN_CLASS_COLOR,
+                    onReveal: () => revealInClass(ann.id),
+                  }}
+                  isOptional
+                  isSelected={selectedIds.includes(ann.id)}
+                  isHovered={hoveredRow === ann.id}
+                  readonly={readonly}
+                  {...(dimensionContext ? { dimensionContext } : {})}
+                  shortId={shortId}
+                  onRowClick={handleRowClick}
+                  onDelete={onDelete}
+                  onRelabelRequest={openRelabel}
+                  onMouseEnter={() => setHoveredRow(ann.id)}
+                  onMouseLeave={() => setHoveredRow(null)}
+                />
+              );
+            }}
           />
         )}
 
@@ -1187,6 +1259,111 @@ function GroupsSection({
   );
 }
 
+/**
+ * Every optional mark in one place, beside the Groups section and built like one
+ * of its groups: the name selects them all, the chevron folds them, and each row
+ * links to its class. The eye hides optional marks from the canvas, as a class's
+ * eye hides that class.
+ */
+function OptionalSection({
+  members,
+  selectedIds,
+  collapsed,
+  hidden,
+  onToggleCollapse,
+  onSelect,
+  onToggleHidden,
+  renderMember,
+}: {
+  /** The optional marks that pass the filter, in list order. */
+  members: CanonicalAnnotation[];
+  selectedIds: string[];
+  collapsed: boolean;
+  hidden: boolean;
+  onToggleCollapse: () => void;
+  onSelect?: (() => void) | undefined;
+  onToggleHidden?: (() => void) | undefined;
+  renderMember: (ann: CanonicalAnnotation) => React.ReactNode;
+}) {
+  const allSelected = members.length > 0 && members.every((a) => selectedIds.includes(a.id));
+  return (
+    <div data-optional-section style={{ borderBottom: "1px solid var(--ae-border)", opacity: hidden ? 0.45 : 1 }}>
+      <div
+        onClick={() => onSelect?.()}
+        title={onSelect ? `Select the ${members.length} optional annotations` : undefined}
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 1,
+          display: "flex",
+          alignItems: "center",
+          gap: 7,
+          padding: "5px 10px 5px 12px",
+          minHeight: 26,
+          boxSizing: "border-box",
+          cursor: onSelect ? "pointer" : "default",
+          background: allSelected ? "var(--ae-selection)" : "var(--ae-bg-surface)",
+          borderTop: "1px solid var(--ae-border-subtle)",
+          borderBottom: "1px solid var(--ae-border-subtle)",
+          borderLeft: allSelected ? "2px solid var(--ae-accent)" : "2px solid transparent",
+          userSelect: "none",
+        }}
+      >
+        <span
+          aria-hidden
+          style={{
+            boxSizing: "border-box",
+            width: 12,
+            height: 12,
+            borderRadius: 3,
+            border: "1.5px dashed var(--ae-text-secondary)",
+            flexShrink: 0,
+          }}
+        />
+        <span
+          style={{
+            flex: 1,
+            minWidth: 0,
+            fontSize: 12,
+            fontWeight: 500,
+            color: "var(--ae-text-primary)",
+          }}
+        >
+          Optional
+        </span>
+        {onToggleHidden && (
+          <button
+            type="button"
+            title={hidden ? "Show optional marks on canvas" : "Hide optional marks from canvas"}
+            aria-label={hidden ? "Show optional marks on canvas" : "Hide optional marks from canvas"}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleHidden();
+            }}
+            style={eyeBtn}
+          >
+            <EyeIcon open={!hidden} />
+          </button>
+        )}
+        <span style={countBadge}>{members.length}</span>
+        <button
+          type="button"
+          title={collapsed ? "Expand Optional" : "Collapse Optional"}
+          aria-expanded={!collapsed}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleCollapse();
+          }}
+          style={actionBtn}
+        >
+          <Chevron collapsed={collapsed} />
+        </button>
+      </div>
+      {!collapsed && members.map(renderMember)}
+    </div>
+  );
+}
+
 interface AnnotationRowProps {
   ann: CanonicalAnnotation;
   /** The group this row's annotation is in, when grouping is on and it has one. */
@@ -1472,6 +1649,9 @@ const UNGROUPED_KEY = "__ungrouped__";
 
 /** Collapse keys for annotation groups are prefixed so no class id can collide with one. */
 const GROUP_KEY_PREFIX = "__group__:";
+
+/** Collapse key of the Optional section, beside the groups' and classes'. */
+const OPTIONAL_KEY = "__optional__";
 
 const EMPTY_SET: ReadonlySet<string> = new Set();
 
