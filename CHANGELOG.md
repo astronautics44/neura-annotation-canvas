@@ -2,7 +2,28 @@
 
 All notable changes to `@astronautics44/neura-annotation-canvas`.
 
-## 2.3.0
+## 2.3.1
+
+Optional annotations get a section of their own in the annotations panel. Panel
+only: `canonical.ts` and every prop are unchanged.
+
+### Added
+
+- **An Optional section**, after Groups and before the classes, shown with
+  `enableOptional` on and at least one annotation optional. A dashed swatch, the
+  count, an eye and a chevron.
+- **Its name selects every optional annotation the canvas shows**, as a group's
+  name selects its members.
+- **Its rows are the optional annotations**, each linking to its class the way a
+  group member does. An annotation that is grouped and optional is listed under
+  its group, under Optional and under its class.
+- **Its eye hides optional annotations from the canvas.** Hidden ones cannot be
+  picked, box-selected or selected with `Cmd/Ctrl+A`, and leave the selection
+  when hidden, exactly as a hidden class does. Marking a selection optional
+  while they are hidden clears the selection.
+- It folds with **Collapse all** and starts folded under
+  `annotationGroupsCollapsed`.
+
 
 Annotations can be marked optional. A contract change, additive: nothing
 existing moved, and a consumer that does not turn it on sees nothing new.

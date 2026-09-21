@@ -120,6 +120,26 @@ export function allOptional(annotations: CanonicalAnnotation[], ids: readonly st
   return seen > 0;
 }
 
+/** The optional marks among these, in list order: the panel's Optional section. */
+export function optionalMarks(annotations: readonly CanonicalAnnotation[]): CanonicalAnnotation[] {
+  return annotations.filter((a) => a.optional === true);
+}
+
+/**
+ * Whether an annotation is drawn and can be picked: its class is not hidden,
+ * and it is not an optional mark while optional marks are hidden. Hiding is a
+ * view of the canvas, so a hidden mark is still an instance of its class and
+ * still saved.
+ */
+export function isShownOnCanvas(
+  ann: CanonicalAnnotation,
+  hiddenClasses: ReadonlySet<string>,
+  optionalHidden: boolean,
+): boolean {
+  if (hiddenClasses.has(ann.label)) return false;
+  return !(optionalHidden && ann.optional === true);
+}
+
 export function annotationReducer(state: CanonicalAnnotation[], action: import("./canvasConstants").Action): CanonicalAnnotation[] {
   switch (action.type) {
     case "LOAD": return action.payload;

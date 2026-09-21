@@ -58,6 +58,7 @@ import {
 import {
   hexToRgba, bboxToKonva, centroid, bboxHandles,
   slugify, annotationReducer, getAnnotationBounds, boxesIntersect, allOptional,
+  optionalMarks, isShownOnCanvas,
 } from "./canvasHelpers";
 
 export type { DrawingScale } from "../utils/drawingScale";
@@ -814,6 +815,13 @@ export function AnnotationCanvas({
    * no way to restore them.
    */
   const hiddenClasses = showAnnotationsPanel ? hiddenClassesState : EMPTY_HIDDEN_CLASSES;
+  /**
+   * Whether optional marks are hidden from the canvas, by the Optional
+   * section's eye. Applied only while that eye can be reached, for the same
+   * reason as the class filter above.
+   */
+  const [optionalHiddenState, setOptionalHiddenState] = useState(false);
+  const optionalHidden = showAnnotationsPanel && enableOptional && optionalHiddenState;
 
   /**
    * Pinned annotation class. While set, a finished shape is committed straight
@@ -860,6 +868,15 @@ export function AnnotationCanvas({
         const ann = annotationsRef.current.find((a) => a.id === id);
         return ann ? !next.has(ann.label) : false;
       }),
+    );
+  }, []);
+
+  /** Hide or show every optional mark, dropping hidden ones from the selection. */
+  const handleOptionalVisibilityChange = useCallback((hide: boolean) => {
+    setOptionalHiddenState(hide);
+    if (!hide) return;
+    setSelectedIds((prev) =>
+      prev.filter((id) => annotationsRef.current.find((a) => a.id === id)?.optional !== true),
     );
   }, []);
 
@@ -1175,12 +1192,12 @@ export function AnnotationCanvas({
    */
   const handleToggleOptional = useCallback(() => {
     if (selectedIds.length === 0) return;
-    dispatchAndNotify({
-      type: "SET_OPTIONAL_MANY",
-      ids: selectedIds,
-      optional: !allOptional(annotationsRef.current, selectedIds),
-    });
-  }, [selectedIds, dispatchAndNotify]);
+    const optional = !allOptional(annotationsRef.current, selectedIds);
+    dispatchAndNotify({ type: "SET_OPTIONAL_MANY", ids: selectedIds, optional });
+    // Marks made optional while optional marks are hidden leave the canvas,
+    // and a selection of shapes nobody can see is one nobody can act on.
+    if (optional && optionalHidden) setSelectedIds([]);
+  }, [selectedIds, dispatchAndNotify, optionalHidden]);
 
   const handleBringForward = useCallback(() => {
     const id = selectedIds[0];
@@ -1255,7 +1272,7 @@ export function AnnotationCanvas({
       // Select all: Cmd/Ctrl+A
       if (enableSelectAll && (e.metaKey || e.ctrlKey) && e.key === "a") {
         e.preventDefault();
-        setSelectedIds(annotationsRef.current.filter((a) => !hiddenClasses.has(a.label)).map((a) => a.id));
+        setSelectedIds(annotationsRef.current.filter((a) => isShownOnCanvas(a, hiddenClasses, optionalHidden)).map((a) => a.id));
         return;
       }
 
@@ -1382,7 +1399,7 @@ export function AnnotationCanvas({
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp); };
-  }, [draw, enableGroups, enableOptional, handleToggleOptional, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelIds, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction, hiddenClasses, labels, setActiveLabel, enableActiveLabel, tool, enableComments, activeCommentId, beginComment, deleteComment, selectComment, onCommentDelete, pendingComment, cancelComment]);
+  }, [draw, enableGroups, enableOptional, handleToggleOptional, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelIds, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction, hiddenClasses, optionalHidden, labels, setActiveLabel, enableActiveLabel, tool, enableComments, activeCommentId, beginComment, deleteComment, selectComment, onCommentDelete, pendingComment, cancelComment]);
 
   // ---------------------------------------------------------------------------
   // Stage event handlers
@@ -1646,7 +1663,7 @@ export function AnnotationCanvas({
         if (!marquee.additive) setSelectedIds([]);
       } else {
         const hits = annotationsRef.current
-          .filter((ann) => !hiddenClasses.has(ann.label))
+          .filter((ann) => isShownOnCanvas(ann, hiddenClasses, optionalHidden))
           .filter((ann) => boxesIntersect(box, getAnnotationBounds(ann)))
           .map((ann) => ann.id);
         if (marquee.additive) {
@@ -1675,7 +1692,7 @@ export function AnnotationCanvas({
     setDraggingAnnotation(null);
     setDraggingHandle(null);
     setDraggingVertex(null);
-  }, [readonly, draw, getImagePos, marquee, hiddenClasses]);
+  }, [readonly, draw, getImagePos, marquee, hiddenClasses, optionalHidden]);
 
   const handleStageContextMenu = useCallback((e: KonvaEventObject<MouseEvent>) => {
     if (polylineFinishAction === "right-click" && draw.phase === "polyline-drawing" && draw.pts.length >= 2) {
@@ -2069,6 +2086,15 @@ export function AnnotationCanvas({
     revealRef.current(ids);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** The Optional section's name: select every optional mark the canvas shows. */
+  const selectOptionalMarks = useCallback(() => {
+    const ids = optionalMarks(annotationsRef.current)
+      .filter((a) => isShownOnCanvas(a, hiddenClasses, optionalHidden))
+      .map((a) => a.id);
+    setSelectedIds(ids);
+    revealRef.current(ids);
+  }, [hiddenClasses, optionalHidden]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const groupingEnabled = enableGroups && !readonly;
 
   /*
@@ -2170,8 +2196,8 @@ export function AnnotationCanvas({
   useEffect(() => { setDraftComment(null); }, [tool]);
 
   const visibleAnnotations = useMemo(
-    () => annotations.filter((a) => !hiddenClasses.has(a.label)),
-    [annotations, hiddenClasses],
+    () => annotations.filter((a) => isShownOnCanvas(a, hiddenClasses, optionalHidden)),
+    [annotations, hiddenClasses, optionalHidden],
   );
 
   const labelsById = useMemo(
@@ -2653,6 +2679,9 @@ export function AnnotationCanvas({
           onGroupRecolor={groupingEnabled ? recolorGroup : undefined}
           onGroupDelete={groupingEnabled ? deleteGroup : undefined}
           showOptional={enableOptional}
+          optionalHidden={optionalHidden}
+          onOptionalVisibilityChange={handleOptionalVisibilityChange}
+          onOptionalSelect={selectOptionalMarks}
         />
         )}
       </div>

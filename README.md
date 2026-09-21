@@ -1394,6 +1394,20 @@ An optional row in the panel carries a dashed **Optional** tag, under its class
 and under its group, so the state is readable at a zoom where the dash is not.
 With `readonly` the dash and the tag are shown and nothing can be toggled.
 
+The panel also lists them together, in an **Optional** section after Groups,
+from 2.3.1:
+
+| Gesture | Effect |
+|---|---|
+| Click **Optional** | Selects every optional annotation the canvas shows |
+| The eye on **Optional** | Hides every optional annotation from the canvas, or shows them again. Hidden ones cannot be picked, box-selected or selected with `Cmd/Ctrl+A` |
+| The chevron | Folds the section; **Collapse all** folds it with the rest |
+| A row's class arrow | Selects that one annotation and shows it under its class |
+
+An annotation that is grouped and optional is listed under its group, under
+Optional and under its class. The section appears only while at least one
+annotation is optional.
+
 Without `enableOptional` the field is neither read nor drawn, so a consumer that
 never turns it on sees nothing new. `Cmd/Ctrl+Shift+O` remains the hollow
 toggle; only plain `O` is this.
