@@ -57,7 +57,7 @@ import {
 } from "./canvasConstants";
 import {
   hexToRgba, bboxToKonva, centroid, bboxHandles,
-  slugify, annotationReducer, getAnnotationBounds, boxesIntersect,
+  slugify, annotationReducer, getAnnotationBounds, boxesIntersect, allOptional,
 } from "./canvasHelpers";
 
 export type { DrawingScale } from "../utils/drawingScale";
@@ -248,6 +248,15 @@ interface Props {
   groups?: AnnotationGroup[];
   /** Fires with the whole group list after any group is created, renamed, recoloured or deleted. */
   onGroupsChange?: (groups: AnnotationGroup[]) => void;
+  /**
+   * Let the user mark annotations optional: select any mix of shapes and
+   * labels and press `O` or **Optional** on the selection bar. An optional
+   * annotation is drawn dashed and keeps its label and its group; the flag
+   * rides on `CanonicalAnnotation.optional`. What optional means is the
+   * consumer's. Default: false, and the field is neither read nor drawn
+   * without it.
+   */
+  enableOptional?: boolean;
   /**
    * When label chips are visible on annotations.
    * - "always"         — always shown when zoom ≥ 30% (default)
@@ -474,6 +483,7 @@ export function AnnotationCanvas({
   showAnnotationsPanel = true,
   annotationGroupsCollapsed = false,
   enableGroups = false,
+  enableOptional = false,
   groups: initialGroups,
   onGroupsChange,
   labelVisibility = "always",
@@ -1158,6 +1168,20 @@ export function AnnotationCanvas({
     dispatchAndNotify({ type: "UPDATE", payload: toggleHollow(ann) });
   }, [selectedIds, dispatchAndNotify]);
 
+  /**
+   * Mark the selection optional, or not optional when every selected mark
+   * already is. One reducer action, so one undo step and one `onChange`
+   * whatever the selection's size.
+   */
+  const handleToggleOptional = useCallback(() => {
+    if (selectedIds.length === 0) return;
+    dispatchAndNotify({
+      type: "SET_OPTIONAL_MANY",
+      ids: selectedIds,
+      optional: !allOptional(annotationsRef.current, selectedIds),
+    });
+  }, [selectedIds, dispatchAndNotify]);
+
   const handleBringForward = useCallback(() => {
     const id = selectedIds[0];
     if (!id) return;
@@ -1327,6 +1351,15 @@ export function AnnotationCanvas({
         return;
       }
 
+      // Optional: O with a selection. Plain O only: Cmd/Ctrl+Shift+O is the
+      // hollow toggle above. A comment box is a textarea, which the guard at
+      // the top of this handler does not cover, so it is checked here.
+      if ((e.key === "o" || e.key === "O") && !e.metaKey && !e.ctrlKey && !e.altKey && selectedIds.length >= 1 && draw.phase === "idle" && enableOptional && !readonly && !(e.target instanceof HTMLTextAreaElement)) {
+        e.preventDefault();
+        handleToggleOptional();
+        return;
+      }
+
       if (e.key === "Enter" && draw.phase === "polygon-drawing" && draw.pts.length >= 3) {
         const pos = draw.pts[draw.pts.length - 1] ?? [0, 0];
         setDraw({ phase: "polygon-pending", pts: draw.pts, pos: pos as [number, number] });
@@ -1349,7 +1382,7 @@ export function AnnotationCanvas({
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp); };
-  }, [draw, enableGroups, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelIds, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction, hiddenClasses, labels, setActiveLabel, enableActiveLabel, tool, enableComments, activeCommentId, beginComment, deleteComment, selectComment, onCommentDelete, pendingComment, cancelComment]);
+  }, [draw, enableGroups, enableOptional, handleToggleOptional, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelIds, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction, hiddenClasses, labels, setActiveLabel, enableActiveLabel, tool, enableComments, activeCommentId, beginComment, deleteComment, selectComment, onCommentDelete, pendingComment, cancelComment]);
 
   // ---------------------------------------------------------------------------
   // Stage event handlers
@@ -2236,6 +2269,7 @@ export function AnnotationCanvas({
         displayName={lm?.displayName ?? ann.label}
         isSelected={isSelected}
         isHovered={hoveredId === ann.id}
+        isOptional={enableOptional && ann.optional === true}
         showHandles={isSelected && selectedIds.length === 1}
         scale={scale}
         theme={resolved}
@@ -2430,6 +2464,12 @@ export function AnnotationCanvas({
               isHollow={singleIsHollow}
               onRelabel={readonly ? undefined : () => setRelabelIds(selectedIds)}
               onGroup={groupingEnabled ? () => setGroupingIds(selectedIds) : undefined}
+              {...(enableOptional && !readonly
+                ? {
+                  onToggleOptional: handleToggleOptional,
+                  allOptional: allOptional(annotations, selectedIds),
+                }
+                : {})}
               onMerge={handleMerge}
               onSubtract={handleSubtract}
               onIntersect={handleIntersect}
@@ -2612,6 +2652,7 @@ export function AnnotationCanvas({
           onGroupRename={groupingEnabled ? renameGroup : undefined}
           onGroupRecolor={groupingEnabled ? recolorGroup : undefined}
           onGroupDelete={groupingEnabled ? deleteGroup : undefined}
+          showOptional={enableOptional}
         />
         )}
       </div>

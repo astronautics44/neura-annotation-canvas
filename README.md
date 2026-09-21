@@ -186,6 +186,7 @@ interface AnnotationCanvasProps {
   enableGroups?: boolean; // named, coloured groups of annotations; default: false
   groups?: AnnotationGroup[]; // initial groups, like annotations
   onGroupsChange?: (groups: AnnotationGroup[]) => void;
+  enableOptional?: boolean; // mark annotations optional, drawn dashed; default: false
 
   // Label chip visibility
   labelVisibility?: "always" | "hover" | "selected" | "hover+selected"; // default: "always"
@@ -1369,6 +1370,33 @@ groups and their colours are shown and nothing can be changed.
 
 A new group takes the first colour of the canvas's palette that no group on the
 image uses; consumers that want their own palette recolour on `onGroupsChange`.
+
+### Optional marks — `enableOptional`
+
+```tsx
+<AnnotationCanvas enableOptional ... />
+```
+
+An annotation can be marked **optional**: it is still an instance of its label
+and still a member of its group, and it is **drawn dashed** instead of solid, in
+the same colour. A count mark becomes a dashed outline with a faint fill. The
+flag is `annotation.optional`, `true` or absent; what optional means, such as
+leaving a mark out of a bid total, is the consumer's.
+
+| Gesture | Effect |
+|---|---|
+| `O`, or **Optional (n)** on the selection bar | Marks every selected annotation optional |
+| The same, when every selected annotation is already optional | The bar reads **Not optional** and clears the flag |
+
+Every toggle is one undo step and one `onChange`, whatever the selection's size.
+Changing an optional annotation's label, group or position keeps it optional.
+An optional row in the panel carries a dashed **Optional** tag, under its class
+and under its group, so the state is readable at a zoom where the dash is not.
+With `readonly` the dash and the tag are shown and nothing can be toggled.
+
+Without `enableOptional` the field is neither read nor drawn, so a consumer that
+never turns it on sees nothing new. `Cmd/Ctrl+Shift+O` remains the hollow
+toggle; only plain `O` is this.
 
 ### Starting with every group collapsed — `annotationGroupsCollapsed`
 

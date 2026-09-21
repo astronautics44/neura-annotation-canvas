@@ -18,6 +18,11 @@ export interface CanonicalAnnotation {
    * only when the canvas has `enableGroups`; a value naming no group is ignored.
    */
   group?: string;
+  /**
+   * True when this mark is optional. Read and drawn only when the canvas has
+   * `enableOptional`; absent means false.
+   */
+  optional?: boolean;
 }
 
 /**

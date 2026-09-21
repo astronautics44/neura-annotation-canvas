@@ -95,6 +95,31 @@ function withGroup(annotation: CanonicalAnnotation, group: string | null): Canon
   return rest;
 }
 
+/**
+ * The annotation marked optional, or with the key removed when it is not, so a
+ * mark made not optional again is shaped exactly as one never marked. Returns
+ * the same object when nothing changes, for the same reason `withGroup` does.
+ */
+function withOptional(annotation: CanonicalAnnotation, optional: boolean): CanonicalAnnotation {
+  if ((annotation.optional === true) === optional) return annotation;
+  if (optional) return { ...annotation, optional: true };
+  const { optional: _removed, ...rest } = annotation;
+  return rest;
+}
+
+/** Whether every annotation named is optional: what the toggle would undo. */
+export function allOptional(annotations: CanonicalAnnotation[], ids: readonly string[]): boolean {
+  if (ids.length === 0) return false;
+  const wanted = new Set(ids);
+  let seen = 0;
+  for (const a of annotations) {
+    if (!wanted.has(a.id)) continue;
+    if (a.optional !== true) return false;
+    seen += 1;
+  }
+  return seen > 0;
+}
+
 export function annotationReducer(state: CanonicalAnnotation[], action: import("./canvasConstants").Action): CanonicalAnnotation[] {
   switch (action.type) {
     case "LOAD": return action.payload;
@@ -119,6 +144,11 @@ export function annotationReducer(state: CanonicalAnnotation[], action: import("
     }
     case "CLEAR_GROUP":
       return state.map((a) => (a.group === action.group ? withGroup(a, null) : a));
+    case "SET_OPTIONAL_MANY": {
+      const ids = new Set(action.ids);
+      if (ids.size === 0) return state;
+      return state.map((a) => (ids.has(a.id) ? withOptional(a, action.optional) : a));
+    }
     case "DELETE": return state.filter((a) => a.id !== action.id);
     case "DELETE_MANY": return state.filter((a) => !action.ids.includes(a.id));
     case "MOVE": return state.map((a) =>

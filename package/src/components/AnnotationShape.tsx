@@ -45,6 +45,15 @@ const ENGINE_STROKE_WIDTH = 1.5;
 const HUMAN_STROKE_WIDTH = 2;
 const OVERLAY_MIN_SCALE = 0.3;
 const FILL_ALPHA = { selected: 0.18, hovered: 0.15, engine: 0.08, human: 0.12 };
+/**
+ * An optional mark's stroke, dash then gap, in screen pixels. Konva applies a
+ * dash after resetting the transform for a stroke that does not scale, so this
+ * holds at every zoom without being divided by the scale. One array, so the
+ * prop never changes identity.
+ */
+const OPTIONAL_DASH = [6, 4];
+/** An optional count mark is an outline with a faint fill, not a solid dot. */
+const OPTIONAL_POINT_FILL_ALPHA = 0.25;
 
 export type LabelVisibility = "always" | "hover" | "selected" | "hover+selected" | "never";
 export type LabelDisplayMode = "chip" | "card";
@@ -82,6 +91,12 @@ interface AnnotationShapeProps {
   displayName: string;
   isSelected: boolean;
   isHovered: boolean;
+  /**
+   * Drawn dashed. The canvas passes true only when `enableOptional` is on and
+   * the annotation is marked optional, so a consumer that never turned it on
+   * draws exactly what it drew before.
+   */
+  isOptional: boolean;
   /** Resize and vertex handles show only when this is the one selected shape. */
   showHandles: boolean;
   /** The stage scale React last rendered with. */
@@ -106,6 +121,7 @@ function AnnotationShapeImpl({
   displayName,
   isSelected,
   isHovered,
+  isOptional,
   showHandles,
   scale,
   theme,
@@ -167,6 +183,7 @@ function AnnotationShapeImpl({
     strokeScaleEnabled: false,
     perfectDrawEnabled: false,
     opacity,
+    ...(isOptional ? { dash: OPTIONAL_DASH } : {}),
     ...selectionGlow(SELECTION_GLOW_PX / scale),
     ...handlers,
   };
@@ -468,9 +485,10 @@ function AnnotationShapeImpl({
         <ScreenSpace x={x} y={y} scale={scale}>
           <Circle
             radius={POINT_RADIUS}
-            fill={color}
-            stroke={isSelected ? theme.accent : theme.handleFill}
+            fill={isOptional ? hexToRgba(color, OPTIONAL_POINT_FILL_ALPHA) : color}
+            stroke={isSelected ? theme.accent : isOptional ? color : theme.handleFill}
             strokeWidth={2}
+            {...(isOptional ? { dash: OPTIONAL_DASH } : {})}
             opacity={opacity}
             perfectDrawEnabled={false}
             {...selectionGlow(SELECTION_GLOW_PX)}

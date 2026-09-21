@@ -26,6 +26,13 @@ interface Props {
    */
   onGroup?: (() => void) | undefined;
   /**
+   * Mark everything selected optional, or not optional when it all already is.
+   * Provided only when optional marks are on and editing is allowed.
+   */
+  onToggleOptional?: (() => void) | undefined;
+  /** Every selected annotation is optional, so the toggle reads "Not optional". */
+  allOptional?: boolean | undefined;
+  /**
    * Start a comment on the selection. Provided only when commenting is on —
    * the visible path to the comment box, so it is not hotkey-only.
    */
@@ -81,6 +88,8 @@ export function ShapeOpsBar({
   isHollow,
   onRelabel,
   onGroup,
+  onToggleOptional,
+  allOptional = false,
   onComment,
 }: Props) {
   if (count === 0) return null;
@@ -131,6 +140,19 @@ export function ShapeOpsBar({
           }
           disabled={false}
           onClick={onGroup}
+        />
+      )}
+
+      {onToggleOptional && (
+        <OpButton
+          label={allOptional ? "Not optional" : count > 1 ? `Optional (${count})` : "Optional"}
+          title={
+            allOptional
+              ? `Mark ${count > 1 ? `all ${count} selected annotations` : "this annotation"} as not optional (O)`
+              : `Mark ${count > 1 ? `all ${count} selected annotations` : "this annotation"} as optional (O)`
+          }
+          disabled={false}
+          onClick={onToggleOptional}
         />
       )}
 
