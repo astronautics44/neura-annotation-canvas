@@ -40,10 +40,19 @@ export type SymbolSizeUnit = "mm" | "cm" | "m" | "in" | "ft";
 
 /** Manual real-world size for a symbol, stored in `annotation.meta.symbolSize`. */
 export interface SymbolSize {
-  /** Dimension name, e.g. "diameter", "thickness". */
+  /** Dimension name, e.g. "diameter", "thickness", "volume". */
   attribute: string;
+  /**
+   * The measurement in `unit`. For a volume entered as three dimensions this is
+   * their product, in cubic `unit`: `3×4×5 in` stores `60`.
+   */
   value: number;
   unit: SymbolSizeUnit;
+  /**
+   * Set only for `attribute: "volume"` entered as length × width × height, all
+   * in `unit`: `[3, 4, 5]`. Absent for every one-dimensional attribute.
+   */
+  dimensions?: [number, number, number];
 }
 
 export interface LabelMap {

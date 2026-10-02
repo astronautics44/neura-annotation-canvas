@@ -2,6 +2,29 @@
 
 All notable changes to `@astronautics44/neura-annotation-canvas`.
 
+## 2.4.0
+
+Volume as a symbol size: three dimensions in one unit. A contract change,
+additive: `SymbolSize` gains an optional field and nothing existing moved.
+
+### Added
+
+- **`volume` in the default attribute dropdown**, after `gauge`. With it picked
+  the Value field reads **Dimensions (L × W × H)** and takes `3x4x5`,
+  `3 × 4 × 5`, `3*4*5` or `3 by 4 by 5`. The one unit applies to all three, and
+  the total (`60in³`) shows as you type.
+- **`SymbolSize.dimensions`**, `[l, w, h]` in `unit`, set only on a volume.
+  `value` holds their product in cubic `unit`, so a consumer reading `value`
+  alone still gets a number. On load the product is recomputed from
+  `dimensions`.
+- **Display**: `volume 3×4×5in` on the chip and card, `volume - 3×4×5in (60in³)`
+  in the panel.
+
+### Unchanged
+
+Every one-dimensional size is stored and shown exactly as before. A label with
+its own `symbolSizeAttributes` sees volume only if it lists it.
+
 ## 2.3.1
 
 Optional annotations get a section of their own in the annotations panel. Panel

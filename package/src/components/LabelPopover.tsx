@@ -5,6 +5,10 @@ import type { LabelMap, SymbolSize, SymbolSizeUnit } from "../types/canonical";
 import {
   DEFAULT_SYMBOL_SIZE_ATTRIBUTES,
   SYMBOL_SIZE_UNITS,
+  dimensionsToInput,
+  formatSymbolSizeMeasure,
+  isVolumeAttribute,
+  parseDimensions,
 } from "../utils/symbolSize";
 
 interface Props {
@@ -64,6 +68,11 @@ const fieldLabelStyle: React.CSSProperties = {
   letterSpacing: "0.06em",
 };
 
+/** What the Value field shows for a stored size: `12`, or `3x4x5` for a volume. */
+function symbolSizeToInput(size: SymbolSize): string {
+  return size.dimensions ? dimensionsToInput(size.dimensions) : size.value.toString();
+}
+
 export function LabelPopover({
   labels,
   position,
@@ -90,7 +99,7 @@ export function LabelPopover({
   );
   const [customAttribute, setCustomAttribute] = useState("");
   const [sizeValue, setSizeValue] = useState(
-    initialSymbolSize?.value.toString() ?? "",
+    initialSymbolSize ? symbolSizeToInput(initialSymbolSize) : "",
   );
   const [sizeUnit, setSizeUnit] = useState<SymbolSizeUnit>(
     initialSymbolSize?.unit ?? "mm",
@@ -104,6 +113,7 @@ export function LabelPopover({
 
   const resolvedAttribute =
     attributeChoice === "__custom__" ? customAttribute.trim() : attributeChoice;
+  const isVolume = isVolumeAttribute(resolvedAttribute);
 
   const filtered = labels.filter((l) =>
     l.displayName.toLowerCase().includes(query.toLowerCase()),
@@ -153,7 +163,7 @@ export function LabelPopover({
         const inList = attrs.includes(initialSymbolSize.attribute);
         setAttributeChoice(inList ? initialSymbolSize.attribute : "__custom__");
         setCustomAttribute(inList ? "" : initialSymbolSize.attribute);
-        setSizeValue(initialSymbolSize.value.toString());
+        setSizeValue(symbolSizeToInput(initialSymbolSize));
         setSizeUnit(initialSymbolSize.unit);
       } else {
         setAttributeChoice(attrs[0] ?? DEFAULT_SYMBOL_SIZE_ATTRIBUTES[0]!);
@@ -198,15 +208,19 @@ export function LabelPopover({
   };
 
   const buildSymbolSize = (): SymbolSize | undefined => {
-    const v = parseFloat(sizeValue);
-    if (!resolvedAttribute || isNaN(v) || v <= 0) return undefined;
+    if (!resolvedAttribute) return undefined;
+    if (isVolume) {
+      const dims = parseDimensions(sizeValue);
+      if (!dims) return undefined;
+      return { attribute: resolvedAttribute, value: dims[0] * dims[1] * dims[2], unit: sizeUnit, dimensions: dims };
+    }
+    const v = Number(sizeValue);
+    if (sizeValue.trim() === "" || !Number.isFinite(v) || v <= 0) return undefined;
     return { attribute: resolvedAttribute, value: v, unit: sizeUnit };
   };
 
-  const canConfirmSymbolSize = (): boolean => {
-    const v = parseFloat(sizeValue);
-    return resolvedAttribute.length > 0 && !isNaN(v) && v > 0;
-  };
+  const canConfirmSymbolSize = (): boolean => buildSymbolSize() !== undefined;
+  const volumePreview = isVolume ? buildSymbolSize() : undefined;
 
   const confirmSymbolSize = (skip = false) => {
     if (!pickedLabel) return;
@@ -417,24 +431,37 @@ export function LabelPopover({
             </div>
 
             <div>
-              <div style={fieldLabelStyle}>Value</div>
+              <div style={fieldLabelStyle}>{isVolume ? "Dimensions (L × W × H)" : "Value"}</div>
+              {/* Text, not number: a volume is typed as `3x4x5`, which a
+                  number input would refuse. Validated on confirm either way. */}
               <input
                 ref={valueRef}
-                type="number"
-                min="0.001"
-                step="any"
+                type="text"
+                inputMode={isVolume ? "text" : "decimal"}
                 value={sizeValue}
                 onChange={(e) => setSizeValue(e.target.value)}
-                placeholder="e.g. 12"
+                placeholder={isVolume ? "e.g. 3x4x5" : "e.g. 12"}
                 style={{
                   ...inputStyle,
                   fontFamily: "'JetBrains Mono','Fira Code',monospace",
                 }}
               />
+              {isVolume && volumePreview && (
+                <div
+                  style={{
+                    marginTop: 3,
+                    fontSize: 11,
+                    color: "var(--ae-text-secondary)",
+                    fontFamily: "'JetBrains Mono','Fira Code',monospace",
+                  }}
+                >
+                  {formatSymbolSizeMeasure(volumePreview)}
+                </div>
+              )}
             </div>
 
             <div>
-              <div style={fieldLabelStyle}>Unit</div>
+              <div style={fieldLabelStyle}>{isVolume ? "Unit (all three)" : "Unit"}</div>
               <select
                 value={sizeUnit}
                 onChange={(e) => setSizeUnit(e.target.value as SymbolSizeUnit)}
