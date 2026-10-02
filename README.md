@@ -311,7 +311,7 @@ export type SymbolSizeUnit = "mm" | "cm" | "m" | "in" | "ft";
 
 /** Manual real-world size stored in annotation.meta.symbolSize */
 export interface SymbolSize {
-  attribute: string; // e.g. "diameter", "thickness"
+  attribute: string; // e.g. "diameter", "thickness", "volume"
   value: number;
   unit: SymbolSizeUnit;
 }
@@ -1546,7 +1546,18 @@ Configure which labels show the size form:
 | `"optional"` | Size form with **Skip** button |
 | `"required"` | Size form — all three fields required |
 
-Default attribute options (when `symbolSizeAttributes` is omitted): `diameter`, `thickness`, `width`, `height`, `depth`, `length`, `radius`, `gauge`. Users can also choose **Custom…** and type any name.
+Default attribute options (when `symbolSizeAttributes` is omitted): `diameter`, `thickness`, `width`, `height`, `depth`, `length`, `radius`, `gauge`, `volume`. Users can also choose **Custom…** and type any name.
+
+### Volume (three dimensions)
+
+`volume` is the one attribute entered as three numbers instead of one. With it
+picked, the Value field becomes **Dimensions (L × W × H)** and takes `3x4x5`,
+`3 × 4 × 5`, `3*4*5` or `3 by 4 by 5`. The one **Unit** applies to all three:
+`in` means 3 in × 4 in × 5 in. The popover shows the total (`60in³`) as you
+type, and Confirm stays disabled until there are exactly three positive numbers.
+
+A label that overrides `symbolSizeAttributes` gets volume only by listing it:
+`symbolSizeAttributes: ["diameter", "volume"]`.
 
 ### Stored on the annotation
 
@@ -1555,7 +1566,16 @@ import type { SymbolSize } from "@astronautics44/neura-annotation-canvas";
 
 // annotation.meta.symbolSize
 { attribute: "diameter", value: 12, unit: "mm" }
+
+// a volume: dimensions in `unit`, value is their product in cubic `unit`
+{ attribute: "volume", value: 60, unit: "in", dimensions: [3, 4, 5] }
 ```
+
+`dimensions` is present only on a volume entered as three dimensions. A
+consumer that reads `value` alone still gets a number: the volume, in in³ here.
+On load, `dimensions` wins over `value`, which is recomputed from them.
+Displayed as `volume 3×4×5in` on the chip and card, `volume - 3×4×5in (60in³)`
+in the panel.
 
 Round-trips through `onSave` / `onChange`. CV engine output typically omits this — reviewers add it during review.
 
