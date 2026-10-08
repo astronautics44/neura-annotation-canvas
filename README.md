@@ -619,7 +619,8 @@ The theme values are injected as CSS custom properties on the root element (`--a
 | Select     | `V` or `Esc` | cursor    | Click to select, drag to move, `Delete`/`Backspace` to remove               |
 | BBox       | `B`          | square    | Click-drag to draw rectangle; label popover on release                      |
 | Polygon    | `P`          | pentagon  | Click to place vertices; close by clicking first vertex or pressing `Enter` |
-| Line       | `L`          | minus     | Two-click draw; label popover on second click                               |
+| Line       | `L`          | minus     | Two-click draw; label popover on second click. With `enableCurves`, `A` after the first click draws an arc |
+| Polyline   | `Y`          | polyline  | Click to place vertices; finish per `polylineFinishAction`. With `enableCurves`, `A` makes the next segment an arc |
 | Point      | `N`          | crosshair | Single click; label popover immediately                                     |
 | Circle     | `C`          | circle    | Click sets center, drag sets radius; label popover on release               |
 | Count      | `T`          | dots      | Click to place multiple points; finish action commits all with one label    |
@@ -1429,8 +1430,38 @@ toggle; only plain `O` is this.
 ```
 
 Any segment of a `line` or `polyline` can be bent into a single smooth bow: a
-curved wall, a door swing, a duct elbow. Select the mark and use the handle in
-the middle of a segment:
+curved wall, a door swing, a duct elbow. Draw it as an arc, PlanSwift style, or
+bend a straight segment afterwards.
+
+#### Drawing an arc — `A`
+
+The way estimators coming from PlanSwift draw arcs, on the line and polyline
+tools:
+
+1. Click the start point, as for any segment.
+2. Press **`A`**. The next segment is an arc.
+3. Click the arc's **middle point** — its peak on the drawing.
+4. Click its **end point**. The segment becomes an arc through all three
+   clicks, and drawing carries on straight.
+
+Click the arc's two ends and its peak on the drawn arc, and the curve lies on it
+at all three. While the end point is open the preview bends through the middle
+point to the pointer, so the fit is visible before the click. Each `A` makes
+one segment an arc, so a polyline mixes straight runs and arcs in one pass.
+
+| While drawing | Effect |
+|---|---|
+| `A` | Arms an arc for the next segment, or disarms it |
+| `Esc` with an arc armed | Drops only the arc; the path drawn so far stays |
+| `Cmd/Ctrl+Z` | Takes back the last click: the arc's middle point, then the armed arc, then the last vertex. With no vertex left, the drawing is cancelled |
+
+The finish action (`Enter`, right-click or double-click) works as before; an arc
+whose end was not yet clicked is left out. The two clicks of an arc never count
+as a double-click finish.
+
+#### Bending a segment afterwards
+
+Select the mark and use the handle in the middle of a segment:
 
 | Gesture | Effect |
 |---|---|
@@ -1460,6 +1491,11 @@ Bends follow every edit: moving a vertex stretches and turns its neighbouring
 bends with their segments, deleting an inner vertex joins its two segments into
 one straight one, and moving, duplicating or pasting a mark moves its control
 points with it. Every bend is one undo step and one `onChange`.
+
+A curve passes exactly through the three points that define it — start, middle
+and end — and is a smooth arch between them. Mathematically it is a parabola,
+not a circle: for door swings and walls curving up to about 90° the difference
+is a fraction of a percent, and it grows towards a semicircle.
 
 **Measured along the curve.** The length on the chip and card, and
 `measure.perimeter`, use the exact arc length of each bent segment. Box-select

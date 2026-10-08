@@ -11,7 +11,7 @@ import React, {
 } from "react";
 import type { KonvaEventObject } from "konva/lib/Node";
 import type { Stage as StageType } from "konva/lib/Stage";
-import { Stage, Layer, Image as KonvaImage, Rect, Line, Circle, Ellipse, Group, Text } from "react-konva";
+import { Stage, Layer, Image as KonvaImage, Rect, Line, Circle, Ellipse, Group, Shape, Text } from "react-konva";
 import useImage from "use-image";
 import type { AnnotationGroup, CanonicalAnnotation, LabelMap, SymbolSize, ToolType } from "../types/canonical";
 import type { CommentAnchor, CommentDraft, CommentTarget, CommentUndoOp } from "../types/comments";
@@ -61,7 +61,8 @@ import {
   optionalMarks, isShownOnCanvas, shifted,
 } from "./canvasHelpers";
 import {
-  bendSegment, curvesOf, distanceToChord, insertVertex, moveVertex, pathBounds, removeVertex, withoutCurves,
+  bendSegment, clickPathDraft, curvesOf, distanceToChord, insertVertex, moveVertex, pathBounds, previewControl,
+  removeVertex, toggleArcDraft, undoPathDraft, withCurves, withoutCurves, type PathDraft,
 } from "../utils/curves";
 
 export type { DrawingScale } from "../utils/drawingScale";
@@ -469,6 +470,22 @@ function isPendingShapePhase(phase: DrawState["phase"]): phase is PendingShapePh
  * This is what stops a controlled consumer that echoes `onSelectionChange`
  * straight back into `selectedIds` from looping forever.
  */
+type PathDrawing = Extract<DrawState, { phase: "polyline-drawing" | "line-drawing" }>;
+
+/** A line or polyline being drawn, as the arc helpers see it. */
+function drawDraft(draw: PathDrawing): PathDraft {
+  return draw.phase === "polyline-drawing"
+    ? { pts: draw.pts, curves: draw.curves, arc: draw.arc }
+    : { pts: [draw.start], curves: [], arc: draw.arc };
+}
+
+/** The drawing with the arc helpers' result put back. A line keeps its one start point. */
+function withDraft(draw: PathDrawing, draft: PathDraft): DrawState {
+  return draw.phase === "polyline-drawing"
+    ? { ...draw, pts: draft.pts, curves: draft.curves, arc: draft.arc }
+    : { ...draw, arc: draft.arc };
+}
+
 /** Bounds of a mark as the canvas draws it: its bends count only when curves are on. */
 function boundsOf(ann: CanonicalAnnotation, curved: boolean): { x: number; y: number; w: number; h: number } {
   const curves = curved ? curvesOf(ann) : undefined;
@@ -1244,6 +1261,17 @@ export function AnnotationCanvas({
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement) return;
 
+      // While a line or polyline is being drawn with curves on, Cmd/Ctrl+Z takes
+      // back the last click, as PlanSwift does, rather than the last edit.
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === "z" && enableCurves
+        && (draw.phase === "polyline-drawing" || draw.phase === "line-drawing")) {
+        e.preventDefault();
+        const draft = drawDraft(draw);
+        const back = undoPathDraft(draft);
+        setDraw(back ? withDraft(draw, back) : { phase: "idle" });
+        return;
+      }
+
       // Undo: Cmd/Ctrl+Z
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === "z") {
         e.preventDefault();
@@ -1337,6 +1365,18 @@ export function AnnotationCanvas({
         cancelComment();
         return;
       }
+      // Escape while an arc is armed drops only the arc, not the path.
+      if (e.key === "Escape" && (draw.phase === "polyline-drawing" || draw.phase === "line-drawing") && draw.arc) {
+        setDraw({ ...draw, arc: null });
+        return;
+      }
+      // PlanSwift's arc key: the next two clicks are the arc's middle and end.
+      if ((e.key === "a" || e.key === "A") && !e.metaKey && !e.ctrlKey && !e.altKey && enableCurves && !readonly
+        && (draw.phase === "polyline-drawing" || draw.phase === "line-drawing")) {
+        e.preventDefault();
+        setDraw(withDraft(draw, toggleArcDraft(drawDraft(draw))));
+        return;
+      }
       if (e.key === "Escape") {
         setMarquee(null); setPanMode(false); setTool("select"); setDraw({ phase: "idle" }); setRelabelIds([]); setGroupingIds([]);
         setDraftComment(null);
@@ -1407,7 +1447,7 @@ export function AnnotationCanvas({
       }
       if (e.key === "Enter" && draw.phase === "polyline-drawing" && draw.pts.length >= 2 && polylineFinishAction === "enter") {
         const pos = draw.pts[draw.pts.length - 1] ?? [0, 0];
-        setDraw({ phase: "polyline-pending", pts: draw.pts, pos: pos as [number, number] });
+        setDraw({ phase: "polyline-pending", pts: draw.pts, pos: pos as [number, number], curves: draw.curves });
         return;
       }
       if (e.key === "Enter" && draw.phase === "count-drawing" && draw.pts.length >= 1 && countFinishAction === "enter") {
@@ -1422,7 +1462,7 @@ export function AnnotationCanvas({
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp); };
-  }, [draw, enableGroups, enableOptional, handleToggleOptional, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelIds, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction, hiddenClasses, optionalHidden, labels, setActiveLabel, enableActiveLabel, tool, enableComments, activeCommentId, beginComment, deleteComment, selectComment, onCommentDelete, pendingComment, cancelComment]);
+  }, [draw, enableGroups, enableOptional, handleToggleOptional, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelIds, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction, hiddenClasses, optionalHidden, labels, setActiveLabel, enableActiveLabel, tool, enableComments, activeCommentId, beginComment, deleteComment, selectComment, onCommentDelete, pendingComment, cancelComment, enableCurves]);
 
   // ---------------------------------------------------------------------------
   // Stage event handlers
@@ -1563,27 +1603,35 @@ export function AnnotationCanvas({
 
     if (tool === "polyline") {
       if (draw.phase === "polyline-drawing") {
-        if (polylineFinishAction === "double-click") {
+        // An arc's two clicks are never a double-click finish.
+        if (polylineFinishAction === "double-click" && !draw.arc) {
           const now = Date.now();
           if (now - lastPolylineClickRef.current < 300 && draw.pts.length >= 2) {
             // Second click within 300ms — commit without adding another vertex
             lastPolylineClickRef.current = 0;
-            setDraw({ phase: "polyline-pending", pts: draw.pts, pos: imgPos });
+            setDraw({ phase: "polyline-pending", pts: draw.pts, pos: imgPos, curves: draw.curves });
             return;
           }
           lastPolylineClickRef.current = now;
+        } else {
+          lastPolylineClickRef.current = 0;
         }
-        setDraw({ ...draw, pts: [...draw.pts, imgPos] });
+        setDraw(withDraft(draw, clickPathDraft(drawDraft(draw), imgPos)));
       } else {
         if (polylineFinishAction === "double-click") lastPolylineClickRef.current = Date.now();
-        setDraw({ phase: "polyline-drawing", pts: [imgPos], cur: imgPos });
+        setDraw({ phase: "polyline-drawing", pts: [imgPos], cur: imgPos, curves: [], arc: null });
       }
       return;
     }
 
     if (tool === "line") {
-      if (draw.phase === "line-drawing") setDraw({ phase: "line-pending", points: [draw.start, imgPos], pos: imgPos });
-      else setDraw({ phase: "line-drawing", start: imgPos, cur: imgPos });
+      if (draw.phase === "line-drawing") {
+        const next = clickPathDraft(drawDraft(draw), imgPos);
+        if (next.pts.length < 2) setDraw(withDraft(draw, next));
+        else setDraw({ phase: "line-pending", points: [draw.start, imgPos], pos: imgPos, curve: next.curves[0] ?? null });
+      } else {
+        setDraw({ phase: "line-drawing", start: imgPos, cur: imgPos, arc: null });
+      }
       return;
     }
 
@@ -1747,7 +1795,7 @@ export function AnnotationCanvas({
     if (polylineFinishAction === "right-click" && draw.phase === "polyline-drawing" && draw.pts.length >= 2) {
       e.evt.preventDefault();
       const pos = draw.pts[draw.pts.length - 1]!;
-      setDraw({ phase: "polyline-pending", pts: draw.pts, pos });
+      setDraw({ phase: "polyline-pending", pts: draw.pts, pos, curves: draw.curves });
       return;
     }
     if (countFinishAction === "right-click" && draw.phase === "count-drawing" && draw.pts.length >= 1) {
@@ -1878,9 +1926,9 @@ export function AnnotationCanvas({
     } else if (pendingDraw.phase === "polygon-pending") {
       dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "polygon", points: pendingDraw.pts, ...base } });
     } else if (pendingDraw.phase === "polyline-pending") {
-      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "polyline", points: pendingDraw.pts, ...base } });
+      dispatchAndNotify({ type: "ADD", payload: withCurves({ id: newId(), type: "polyline", points: pendingDraw.pts, ...base }, pendingDraw.curves) });
     } else if (pendingDraw.phase === "line-pending") {
-      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "line", points: pendingDraw.points, ...base } });
+      dispatchAndNotify({ type: "ADD", payload: withCurves({ id: newId(), type: "line", points: pendingDraw.points, ...base }, [pendingDraw.curve]) });
     } else if (pendingDraw.phase === "point-pending") {
       dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "point", points: [pendingDraw.pt], ...base } });
     } else if (pendingDraw.phase === "circle-pending") {
@@ -1908,9 +1956,9 @@ export function AnnotationCanvas({
     } else if (draw.phase === "polygon-pending") {
       dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "polygon", points: draw.pts, ...base } });
     } else if (draw.phase === "polyline-pending") {
-      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "polyline", points: draw.pts, ...base } });
+      dispatchAndNotify({ type: "ADD", payload: withCurves({ id: newId(), type: "polyline", points: draw.pts, ...base }, draw.curves) });
     } else if (draw.phase === "line-pending") {
-      dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "line", points: draw.points, ...base } });
+      dispatchAndNotify({ type: "ADD", payload: withCurves({ id: newId(), type: "line", points: draw.points, ...base }, [draw.curve]) });
     } else if (draw.phase === "point-pending") {
       dispatchAndNotify({ type: "ADD", payload: { id: newId(), type: "point", points: [draw.pt], ...base } });
     } else if (draw.phase === "circle-pending") {
@@ -2394,6 +2442,48 @@ export function AnnotationCanvas({
     </ScreenSpace>
   );
 
+  /** A drawn path, straight segments and arcs, in the drawing overlay's stroke. */
+  const renderDrawPath = (pts: [number, number][], curves: ([number, number] | null)[], dashed: boolean) => (
+    <Shape
+      stroke={resolved.accent}
+      strokeWidth={1.5}
+      strokeScaleEnabled={false}
+      listening={false}
+      {...(dashed ? { dash: DRAW_DASH } : {})}
+      sceneFunc={(ctx, shape) => {
+        const [first, ...rest] = pts;
+        if (!first) return;
+        ctx.beginPath();
+        ctx.moveTo(first[0], first[1]);
+        rest.forEach(([x, y], i) => {
+          const c = curves[i];
+          if (c) ctx.quadraticCurveTo(c[0], c[1], x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.strokeShape(shape);
+      }}
+    />
+  );
+
+  /** From the last point to the pointer: straight, or bent through an arc's middle point. */
+  const renderRubberBand = (draft: PathDraft, cur: [number, number]) => {
+    const last = draft.pts[draft.pts.length - 1];
+    if (!last) return null;
+    return renderDrawPath([last, cur], [previewControl(draft, cur)], true);
+  };
+
+  /** The middle point an arc will pass through, once it is placed. */
+  const renderArcMid = (arc: { mid: [number, number] | null } | null) => arc?.mid ? (
+    <ScreenSpace x={arc.mid[0]} y={arc.mid[1]} scale={scale} listening={false}>
+      <Circle radius={DRAW_VERTEX_RADIUS} fill={resolved.handleFill} stroke={resolved.accent} strokeWidth={1.5} />
+    </ScreenSpace>
+  ) : null;
+
+  const arcHint = (arc: { mid: [number, number] | null } | null): string | null =>
+    !arc ? null
+      : arc.mid ? "Arc: click its end point · A or Esc for straight"
+        : "Arc: click its middle point · A or Esc for straight";
+
   const renderDraw = () => {
     if (marquee) {
       const { x, y, w, h } = bboxToKonva([marquee.start, marquee.cur]);
@@ -2436,25 +2526,33 @@ export function AnnotationCanvas({
     }
 
     if (draw.phase === "polyline-drawing" && draw.pts.length > 0) {
-      const flat = draw.pts.flatMap(([x, y]) => [x, y]);
-      const lastPt = draw.pts[draw.pts.length - 1]!;
       const finishLabel =
         polylineFinishAction === "right-click" ? "Right-click" :
           polylineFinishAction === "double-click" ? "Double-click" :
             "Enter";
-      const hint = draw.pts.length >= 2 ? `${finishLabel} to finish · Esc to cancel` : "Click to add points · Esc to cancel";
+      const arcKey = enableCurves ? " · A for arc" : "";
+      const hint = arcHint(draw.arc)
+        ?? (draw.pts.length >= 2 ? `${finishLabel} to finish${arcKey} · Esc to cancel` : `Click to add points${arcKey} · Esc to cancel`);
       return (
         <Group>
-          {draw.pts.length > 1 && <Line points={flat} stroke={resolved.accent} strokeWidth={1.5} strokeScaleEnabled={false} />}
-          <Line points={[lastPt[0], lastPt[1], draw.cur[0], draw.cur[1]]} stroke={resolved.accent} strokeWidth={1.5} strokeScaleEnabled={false} dash={DRAW_DASH} />
+          {draw.pts.length > 1 && renderDrawPath(draw.pts, draw.curves, false)}
+          {renderRubberBand(drawDraft(draw), draw.cur)}
           {draw.pts.map(([x, y], i) => renderDrawVertex(x, y, i))}
+          {renderArcMid(draw.arc)}
           {renderDrawHint(draw.cur, hint)}
         </Group>
       );
     }
 
     if (draw.phase === "line-drawing") {
-      return <Line points={[draw.start[0], draw.start[1], draw.cur[0], draw.cur[1]]} stroke={resolved.accent} strokeWidth={1.5} strokeScaleEnabled={false} dash={DRAW_DASH} />;
+      const hint = arcHint(draw.arc);
+      return (
+        <Group>
+          {renderRubberBand(drawDraft(draw), draw.cur)}
+          {renderArcMid(draw.arc)}
+          {hint && renderDrawHint(draw.cur, hint)}
+        </Group>
+      );
     }
 
     if (draw.phase === "circle-drawing") {
