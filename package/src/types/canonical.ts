@@ -23,6 +23,15 @@ export interface CanonicalAnnotation {
    * `enableOptional`; absent means false.
    */
   optional?: boolean;
+  /**
+   * Bends in a `line` or `polyline`, one entry per segment: entry `i` belongs
+   * to the segment from `points[i]` to `points[i + 1]`, so the array is one
+   * shorter than `points`. An entry is the control point of a quadratic Bézier
+   * in image pixels, the same `Q` an SVG path takes; `null` is a straight
+   * segment. Read and drawn only when the canvas has `enableCurves`; absent
+   * means every segment is straight, and a list of the wrong length is ignored.
+   */
+  curves?: ([number, number] | null)[];
 }
 
 /**
