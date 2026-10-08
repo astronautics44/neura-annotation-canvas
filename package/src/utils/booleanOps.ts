@@ -1,5 +1,6 @@
 import { union, difference, intersection } from "polygon-clipping";
 import type { CanonicalAnnotation } from "../types/canonical";
+import { curvesOf, pathLength } from "./curves";
 
 type Ring = [number, number][];
 type Polygon = Ring[];
@@ -296,7 +297,8 @@ export function annotationPixelArea(ann: CanonicalAnnotation): number {
  * Boundary length of an annotation in image pixels.
  * - bbox / polygon / circle: closed perimeter. Compound shapes sum every ring,
  *   so a hollow (donut) shape returns outer + hole boundary.
- * - line / polyline: total open path length.
+ * - line / polyline: total open path length, along the curve of any bent
+ *   segment.
  * - point: 0.
  */
 export function annotationPixelPerimeter(ann: CanonicalAnnotation): number {
@@ -307,7 +309,8 @@ export function annotationPixelPerimeter(ann: CanonicalAnnotation): number {
     return Math.PI * w;
   }
   if (ann.type === "line" || ann.type === "polyline") {
-    return ringPerimeter(ann.points as Ring);
+    const curves = curvesOf(ann);
+    return curves ? pathLength(ann.points, curves) : ringPerimeter(ann.points as Ring);
   }
   const rings = getAnnotationRings(ann);
   let length = 0;

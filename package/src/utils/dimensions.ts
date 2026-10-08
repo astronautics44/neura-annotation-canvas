@@ -107,12 +107,7 @@ export function formatAnnotationCalculatedSize(
   if (ann.type === "polygon") {
     return formatAreaFromPixels(annotationPixelArea(ann), dpi, drawingScale);
   }
-  if (ann.type === "line") {
-    const dx = ann.points[1]![0] - ann.points[0]![0];
-    const dy = ann.points[1]![1] - ann.points[0]![1];
-    return formatDimFromPixels(Math.hypot(dx, dy), dpi, drawingScale);
-  }
-  if (ann.type === "polyline") {
+  if (ann.type === "line" || ann.type === "polyline") {
     return formatDimFromPixels(annotationPixelPerimeter(ann), dpi, drawingScale);
   }
   return "";

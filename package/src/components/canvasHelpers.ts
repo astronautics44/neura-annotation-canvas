@@ -140,6 +140,18 @@ export function isShownOnCanvas(
   return !(optionalHidden && ann.optional === true);
 }
 
+/**
+ * An annotation moved by `delta`, the control points of its bends with it.
+ * Written out here rather than imported so this module keeps no runtime
+ * imports, which is what lets the tests load it straight from `dist`.
+ */
+export function shifted(a: CanonicalAnnotation, delta: [number, number]): CanonicalAnnotation {
+  const move = ([x, y]: [number, number]): [number, number] => [x + delta[0], y + delta[1]];
+  const moved = { ...a, points: a.points.map(move) };
+  if (!Array.isArray(a.curves)) return moved;
+  return { ...moved, curves: a.curves.map((c) => (c ? move(c) : null)) };
+}
+
 export function annotationReducer(state: CanonicalAnnotation[], action: import("./canvasConstants").Action): CanonicalAnnotation[] {
   switch (action.type) {
     case "LOAD": return action.payload;
@@ -171,16 +183,8 @@ export function annotationReducer(state: CanonicalAnnotation[], action: import("
     }
     case "DELETE": return state.filter((a) => a.id !== action.id);
     case "DELETE_MANY": return state.filter((a) => !action.ids.includes(a.id));
-    case "MOVE": return state.map((a) =>
-      a.id !== action.id ? a : {
-        ...a,
-        points: a.points.map(([x, y]) => [x + action.delta[0], y + action.delta[1]] as [number, number]),
-      });
-    case "MOVE_MANY": return state.map((a) =>
-      !action.ids.includes(a.id) ? a : {
-        ...a,
-        points: a.points.map(([x, y]) => [x + action.delta[0], y + action.delta[1]] as [number, number]),
-      });
+    case "MOVE": return state.map((a) => (a.id !== action.id ? a : shifted(a, action.delta)));
+    case "MOVE_MANY": return state.map((a) => (!action.ids.includes(a.id) ? a : shifted(a, action.delta)));
     case "REPLACE_MANY": {
       const remaining = state.filter((a) => !action.removeIds.includes(a.id));
       return [...remaining, ...action.add];

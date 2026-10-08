@@ -2,6 +2,48 @@
 
 All notable changes to `@astronautics44/neura-annotation-canvas`.
 
+## 2.5.0
+
+Curved segments on lines and polylines. A contract change, additive:
+`CanonicalAnnotation` gains an optional field, and a consumer that does not
+turn it on sees nothing new.
+
+### Added
+
+- **`enableCurves`**, default `false`. With it on, the handle in the middle of
+  each segment of a selected line or polyline bends that segment: drag it and
+  the curve passes through the pointer, lopsided when dragged towards one end.
+  It snaps straight within 6 screen pixels of the chord, and a double-click
+  straightens it.
+- **Alt/Option-drag on that handle splits the segment**, which is what a plain
+  drag does without curves. A bent segment splits into two bends tracing the
+  same curve, the new vertex on it. In `edgeSplitMode="anyPoint"` the rest of a
+  bent edge splits along the curve.
+- **`CanonicalAnnotation.curves`**, one entry per segment: a quadratic Bézier
+  control point in image pixels, or `null` for straight. Absent when nothing is
+  bent; a list of the wrong length is ignored. `points` are unchanged, so a
+  consumer reading only them gets the chords.
+- **Lengths follow the curve**: the chip, the card and `measure.perimeter` use
+  the exact arc length of a bent segment. Box-select reaches the bulge.
+- **`geo.curveThrough(start, end, through)`** turns an arc reported as three
+  points into a `curves` entry, and **`geo.flattenCurves(points, curves,
+  steps?)`** turns a bent path into straight pieces.
+- A **Curves** fixture in the harness.
+
+### Changed
+
+- Bends follow every edit: moving a vertex carries the bends either side of it,
+  deleting an inner vertex joins its segments into one straight one, and move,
+  duplicate and paste move the control points.
+- Splitting an edge is one undo step. It used to push two, the first of which
+  undid nothing.
+
+### Unchanged
+
+Without `enableCurves` the segment handle splits exactly as before and `curves`
+is neither drawn nor measured on the canvas; editing the vertices of a mark that
+carries it drops it. Polygons do not bend.
+
 ## 2.4.0
 
 Volume as a symbol size: three dimensions in one unit. A contract change,

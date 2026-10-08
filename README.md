@@ -187,6 +187,7 @@ interface AnnotationCanvasProps {
   groups?: AnnotationGroup[]; // initial groups, like annotations
   onGroupsChange?: (groups: AnnotationGroup[]) => void;
   enableOptional?: boolean; // mark annotations optional, drawn dashed; default: false
+  enableCurves?: boolean; // bend line / polyline segments by their middle handle; default: false
 
   // Label chip visibility
   labelVisibility?: "always" | "hover" | "selected" | "hover+selected"; // default: "always"
@@ -305,6 +306,9 @@ export interface CanonicalAnnotation {
   confidence?: number; // 0–1. undefined = human-created annotation
   source: "engine" | "human"; // engine = from CV output; human = added/modified by reviewer
   meta?: Record<string, unknown>; // passthrough; package reads meta.symbolSize for display
+  curves?: ([number, number] | null)[]; // line / polyline only, one per segment:
+  //   the segment's quadratic Bézier control point in image pixels, or null
+  //   for straight. Read only with enableCurves. See "Curved segments".
 }
 
 export type SymbolSizeUnit = "mm" | "cm" | "m" | "in" | "ft";
@@ -423,6 +427,12 @@ geo.yoloBoxToPoints(
 
 // COCO flat segmentation [x1,y1,x2,y2,...] → [[x,y],[x,y],...]
 geo.cocoSegToPoints(seg: number[]): [number, number][]
+
+// An arc reported as start / middle / end → its `curves` entry (control point)
+geo.curveThrough(start: [number, number], end: [number, number], through: [number, number]): [number, number]
+
+// `points` + `curves` → straight pieces, each bent segment as `steps` (default 24)
+geo.flattenCurves(points: [number, number][], curves?: ([number, number] | null)[], steps?: number): [number, number][]
 ```
 
 ---
@@ -1412,6 +1422,59 @@ Without `enableOptional` the field is neither read nor drawn, so a consumer that
 never turns it on sees nothing new. `Cmd/Ctrl+Shift+O` remains the hollow
 toggle; only plain `O` is this.
 
+### Curved segments — `enableCurves`
+
+```tsx
+<AnnotationCanvas enableCurves ... />
+```
+
+Any segment of a `line` or `polyline` can be bent into a single smooth bow: a
+curved wall, a door swing, a duct elbow. Select the mark and use the handle in
+the middle of a segment:
+
+| Gesture | Effect |
+|---|---|
+| Drag the handle | Bends the segment so the curve passes through the pointer. Drag towards one end and the bow leans that way |
+| Drag it back within 6 screen pixels of the straight chord | Snaps the segment straight |
+| Double-click the handle | Straightens the segment |
+| Alt/Option-drag the handle | Splits the segment and drags the new vertex, as the handle does without curves. A bent segment splits into two bends tracing the same curve, and the new vertex lands on it |
+
+The handle sits on the curve's apex. With `edgeSplitMode="anyPoint"` the rest of
+a bent edge still splits where you click, along the curve. Each segment bends on
+its own, so a polyline can run straight, curve and run straight again with sharp
+corners in between. A bend never makes a wave: a segment bows one way only.
+
+**Stored as** `annotation.curves`, one entry per segment (one shorter than
+`points`): the control point of a quadratic Bézier in image pixels, the same
+`Q` an SVG path takes, or `null` for a straight segment. `points` stay the
+vertices, so a consumer that ignores `curves` still gets the straight chords.
+The key is removed when every segment is straight.
+
+```ts
+// A 1200 px wall bowed 400 px up at its middle
+{ type: "line", points: [[0, 1000], [1200, 1000]], curves: [[600, 200]], ... }
+// apex = (start + 2·control + end) / 4 = [600, 600]
+```
+
+Bends follow every edit: moving a vertex stretches and turns its neighbouring
+bends with their segments, deleting an inner vertex joins its two segments into
+one straight one, and moving, duplicating or pasting a mark moves its control
+points with it. Every bend is one undo step and one `onChange`.
+
+**Measured along the curve.** The length on the chip and card, and
+`measure.perimeter`, use the exact arc length of each bent segment. Box-select
+catches a mark by its bulge, not only its chord.
+
+An engine that reports an arc as three points (start, a point on it, end)
+converts with `geo.curveThrough(start, end, through)`; a backend that takes
+straight segments only can flatten with `geo.flattenCurves(points, curves)`.
+
+Polygons do not bend: their area and the shape operations work on straight
+edges. Without `enableCurves`, `curves` is neither drawn nor measured on the
+canvas, the handle splits as it always has, and editing the vertices of a mark
+that carries `curves` drops them, since the reviewer edited the straight mark
+they could see.
+
 ### Starting with every group collapsed — `annotationGroupsCollapsed`
 
 ```tsx
@@ -1508,6 +1571,8 @@ Where the split point lands on the edge is controlled by the `edgeSplitMode` pro
 ```
 
 Vertex handles always render above edge-split handles, so dragging an existing vertex near an edge never gets misread as a split.
+
+With `enableCurves` on, the handle on a `line` or `polyline` segment bends it instead, and Alt/Option-drag splits. See [Curved segments](#curved-segments--enablecurves).
 
 ### Deleting a vertex
 

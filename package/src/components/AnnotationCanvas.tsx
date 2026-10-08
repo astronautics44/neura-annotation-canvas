@@ -58,8 +58,11 @@ import {
 import {
   hexToRgba, bboxToKonva, centroid, bboxHandles,
   slugify, annotationReducer, getAnnotationBounds, boxesIntersect, allOptional,
-  optionalMarks, isShownOnCanvas,
+  optionalMarks, isShownOnCanvas, shifted,
 } from "./canvasHelpers";
+import {
+  bendSegment, curvesOf, distanceToChord, insertVertex, moveVertex, pathBounds, removeVertex, withoutCurves,
+} from "../utils/curves";
 
 export type { DrawingScale } from "../utils/drawingScale";
 
@@ -69,6 +72,11 @@ const RECOLOR_STEP_MS = 1500;
 const GROUP_POPOVER_TOP = 48;
 /** Fallback when a mark names a class the label map does not carry. */
 const DEFAULT_SHAPE_COLOR = "#ffffff";
+/**
+ * How close to its chord, in screen pixels, a dragged bend handle snaps the
+ * segment straight again.
+ */
+const CURVE_SNAP_PX = 6;
 /** In-progress drawing overlay, in screen pixels. */
 const DRAW_DASH = [4, 4];
 const DRAW_VERTEX_RADIUS = 4;
@@ -294,6 +302,19 @@ interface Props {
    */
   edgeSplitMode?: "midpoint" | "anyPoint";
   /**
+   * Curved segments on lines and polylines. Default false.
+   *
+   * With it on, the handle in the middle of each segment of a selected line or
+   * polyline bends that segment: drag it and the segment curves through the
+   * pointer, double-click it to straighten, Alt/Option-drag it to split the
+   * segment as it did before. Bends are stored in `CanonicalAnnotation.curves`
+   * and measured along the curve. With it off, `curves` is neither drawn nor
+   * measured, the handle splits exactly as it always has, and editing the
+   * vertices of a mark that carries `curves` drops them: the person edited the
+   * straight mark they could see.
+   */
+  enableCurves?: boolean;
+  /**
    * What happens when the user deletes a vertex from a polygon that has only
    * three left — the point at which a polygon can no longer stay a polygon.
    * - "block"    — the deletion is refused, polygons always keep ≥3 vertices (default)
@@ -448,6 +469,12 @@ function isPendingShapePhase(phase: DrawState["phase"]): phase is PendingShapePh
  * This is what stops a controlled consumer that echoes `onSelectionChange`
  * straight back into `selectedIds` from looping forever.
  */
+/** Bounds of a mark as the canvas draws it: its bends count only when curves are on. */
+function boundsOf(ann: CanonicalAnnotation, curved: boolean): { x: number; y: number; w: number; h: number } {
+  const curves = curved ? curvesOf(ann) : undefined;
+  return curves ? pathBounds(ann.points, curves) : getAnnotationBounds(ann);
+}
+
 function sameIds(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((id, index) => id === b[index]);
 }
@@ -492,6 +519,7 @@ export function AnnotationCanvas({
   polylineFinishAction = "enter",
   countFinishAction = "enter",
   edgeSplitMode = "midpoint",
+  enableCurves = false,
   polygonMinVertexAction = "block",
   dpi,
   drawingScale: drawingScaleProp,
@@ -802,6 +830,11 @@ export function AnnotationCanvas({
   const [draggingHandle, setDraggingHandle] = useState<{ annId: string; handleIdx: number; startImg: [number, number] } | null>(null);
   const [draggingVertex, setDraggingVertex] = useState<{ annId: string; vertIdx: number; startImg: [number, number] } | null>(null);
   /** Live cursor position on a hovered edge segment, used by edgeSplitMode "anyPoint". */
+  /**
+   * The bend handle being dragged. `moved` holds off the undo snapshot until
+   * the pointer actually moves, so the press of a double-click is not a step.
+   */
+  const [draggingCurve, setDraggingCurve] = useState<{ annId: string; segIdx: number; moved: boolean } | null>(null);
   const [edgeHover, setEdgeHover] = useState<{ annId: string; segIdx: number; pos: [number, number] } | null>(null);
   /** Drag-box multi-select while the select tool is active. */
   const [marquee, setMarquee] = useState<{ start: [number, number]; cur: [number, number]; additive: boolean } | null>(null);
@@ -1133,12 +1166,7 @@ export function AnnotationCanvas({
     ids
       .map((id) => annotationsRef.current.find((a) => a.id === id))
       .filter((a): a is CanonicalAnnotation => a != null)
-      .map((a) => ({
-        ...a,
-        id: newId(),
-        source: "human" as const,
-        points: a.points.map(([x, y]) => [x + offset[0], y + offset[1]] as [number, number]),
-      })),
+      .map((a) => ({ ...shifted(a, offset), id: newId(), source: "human" as const })),
     []);
 
   const selectedAreaAnnotations = useCallback((): CanonicalAnnotation[] => {
@@ -1245,12 +1273,7 @@ export function AnnotationCanvas({
       // Paste: Cmd/Ctrl+V
       if ((e.metaKey || e.ctrlKey) && e.key === "v" && clipboard.length > 0 && !readonly) {
         e.preventDefault();
-        const copies = clipboard.map((a) => ({
-          ...a,
-          id: newId(),
-          source: "human" as const,
-          points: a.points.map(([x, y]) => [x + 20, y + 20] as [number, number]),
-        }));
+        const copies = clipboard.map((a) => ({ ...shifted(a, [20, 20]), id: newId(), source: "human" as const }));
         // Subsequent pastes keep drifting so the user can see them stacking
         setClipboard(copies);
         snapshot();
@@ -1413,21 +1436,26 @@ export function AnnotationCanvas({
     return screenToImage(viewportRef.current, ptr.x, ptr.y);
   }, []);
 
-  /** Inserts a new vertex at `pos` after segment index `segIdx`, then starts dragging it. */
+  /**
+   * Inserts a new vertex at `pos` after segment index `segIdx`, then starts
+   * dragging it. A bent segment splits into two bends tracing the same curve.
+   */
   const splitEdgeAt = useCallback((ann: CanonicalAnnotation, segIdx: number, pos: [number, number]) => {
-    snapshot();
-    const newPts: [number, number][] = [...ann.points];
-    newPts.splice(segIdx + 1, 0, pos);
-    const updated: CanonicalAnnotation = {
-      ...ann,
-      type: ann.type === "line" ? "polyline" : ann.type,
-      points: newPts,
-    };
+    const { ann: split, at } = insertVertex(enableCurves ? ann : withoutCurves(ann), segIdx, pos);
+    const updated: CanonicalAnnotation = { ...split, type: ann.type === "line" ? "polyline" : ann.type };
     annotationsRef.current = annotationsRef.current.map((a) => a.id === ann.id ? updated : a);
     dispatchAndNotify({ type: "UPDATE", payload: updated });
-    setDraggingVertex({ annId: ann.id, vertIdx: segIdx + 1, startImg: pos });
+    setDraggingVertex({ annId: ann.id, vertIdx: segIdx + 1, startImg: at });
     setEdgeHover(null);
-  }, [snapshot, dispatchAndNotify]);
+  }, [dispatchAndNotify, enableCurves]);
+
+  /** Makes segment `segIdx` of a line or polyline straight again, as one undo step. */
+  const straightenSegment = useCallback((ann: CanonicalAnnotation, segIdx: number) => {
+    if (readonly || !curvesOf(ann)?.[segIdx]) return;
+    const updated = bendSegment(ann, segIdx, null);
+    annotationsRef.current = annotationsRef.current.map((a) => a.id === ann.id ? updated : a);
+    dispatchAndNotify({ type: "UPDATE", payload: updated });
+  }, [readonly, dispatchAndNotify]);
 
   /**
    * Removes vertex `vertIdx` from a poly-based shape; the two edges that met at
@@ -1456,10 +1484,14 @@ export function AnnotationCanvas({
       return;
     }
 
-    const updated: CanonicalAnnotation = { ...ann, type, points: next };
+    // An open path's bends follow its vertices; the two segments meeting at an
+    // inner vertex join into one straight one.
+    const updated: CanonicalAnnotation = ann.type === "line" || ann.type === "polyline"
+      ? removeVertex(enableCurves ? ann : withoutCurves(ann), vertIdx)
+      : { ...ann, type, points: next };
     annotationsRef.current = annotationsRef.current.map((a) => (a.id === ann.id ? updated : a));
     dispatchAndNotify({ type: "UPDATE", payload: updated });
-  }, [readonly, polygonMinVertexAction, dispatchAndNotify]);
+  }, [readonly, polygonMinVertexAction, dispatchAndNotify, enableCurves]);
 
   /**
    * Deletes a corner of a bbox. A rectangle is defined by two corners, so it
@@ -1642,11 +1674,27 @@ export function AnnotationCanvas({
     if (draggingVertex) {
       const ann = annotationsRef.current.find((a) => a.id === draggingVertex.annId);
       if (ann) {
-        dispatch({ type: "UPDATE", payload: { ...ann, points: ann.points.map((p, i) => i === draggingVertex.vertIdx ? imgPos : p) as [number, number][] } });
+        dispatch({ type: "UPDATE", payload: moveVertex(enableCurves ? ann : withoutCurves(ann), draggingVertex.vertIdx, imgPos) });
         setDraggingVertex({ ...draggingVertex, startImg: imgPos });
       }
     }
-  }, [draw, cursor, applyViewport, draggingAnnotation, draggingHandle, draggingVertex, selectedIds, dispatch, marquee]);
+
+    if (draggingCurve) {
+      const ann = annotationsRef.current.find((a) => a.id === draggingCurve.annId);
+      const a = ann?.points[draggingCurve.segIdx];
+      const b = ann?.points[draggingCurve.segIdx + 1];
+      if (ann && a && b) {
+        if (!draggingCurve.moved) {
+          snapshot();
+          setDraggingCurve({ ...draggingCurve, moved: true });
+        }
+        const straight = distanceToChord(imgPos, a, b) * viewportRef.current.scale < CURVE_SNAP_PX;
+        const updated = bendSegment(ann, draggingCurve.segIdx, straight ? null : imgPos);
+        annotationsRef.current = annotationsRef.current.map((x) => (x.id === ann.id ? updated : x));
+        dispatch({ type: "UPDATE", payload: updated });
+      }
+    }
+  }, [draw, cursor, applyViewport, draggingAnnotation, draggingHandle, draggingVertex, draggingCurve, snapshot, selectedIds, dispatch, marquee, enableCurves]);
 
   const handleStageMouseUp = useCallback((e: KonvaEventObject<MouseEvent>) => {
     if (panStart.current) {
@@ -1664,7 +1712,7 @@ export function AnnotationCanvas({
       } else {
         const hits = annotationsRef.current
           .filter((ann) => isShownOnCanvas(ann, hiddenClasses, optionalHidden))
-          .filter((ann) => boxesIntersect(box, getAnnotationBounds(ann)))
+          .filter((ann) => boxesIntersect(box, boundsOf(ann, enableCurves)))
           .map((ann) => ann.id);
         if (marquee.additive) {
           setSelectedIds((prev) => [...new Set([...prev, ...hits])]);
@@ -1692,7 +1740,8 @@ export function AnnotationCanvas({
     setDraggingAnnotation(null);
     setDraggingHandle(null);
     setDraggingVertex(null);
-  }, [readonly, draw, getImagePos, marquee, hiddenClasses, optionalHidden]);
+    setDraggingCurve(null);
+  }, [readonly, draw, getImagePos, marquee, hiddenClasses, optionalHidden, enableCurves]);
 
   const handleStageContextMenu = useCallback((e: KonvaEventObject<MouseEvent>) => {
     if (polylineFinishAction === "right-click" && draw.phase === "polyline-drawing" && draw.pts.length >= 2) {
@@ -2251,9 +2300,9 @@ export function AnnotationCanvas({
    * a shape holds never changes identity and the memo below it holds across a
    * render that changed none of that shape's own inputs.
    */
-  const shapeCallbacks = useRef({ snapshot, getImagePos, splitEdgeAt, deleteVertex, deleteBboxCorner });
+  const shapeCallbacks = useRef({ snapshot, getImagePos, splitEdgeAt, deleteVertex, deleteBboxCorner, straightenSegment, readonly });
   useLayoutEffect(() => {
-    shapeCallbacks.current = { snapshot, getImagePos, splitEdgeAt, deleteVertex, deleteBboxCorner };
+    shapeCallbacks.current = { snapshot, getImagePos, splitEdgeAt, deleteVertex, deleteBboxCorner, straightenSegment, readonly };
   });
 
   const [shapeOps] = useState<ShapeOps>(() => ({
@@ -2265,6 +2314,10 @@ export function AnnotationCanvas({
     deleteVertex: (ann, vertIdx) => shapeCallbacks.current.deleteVertex(ann, vertIdx),
     deleteBboxCorner: (ann, cornerIdx) => shapeCallbacks.current.deleteBboxCorner(ann, cornerIdx),
     hoverEdge: (hover) => setEdgeHover(hover),
+    beginCurveDrag: (annId, segIdx) => {
+      if (!shapeCallbacks.current.readonly) setDraggingCurve({ annId, segIdx, moved: false });
+    },
+    straightenSegment: (ann, segIdx) => shapeCallbacks.current.straightenSegment(ann, segIdx),
   }));
 
   const handlersFor = useCallback((id: string): AnnotationHandlers => {
@@ -2296,6 +2349,7 @@ export function AnnotationCanvas({
         isSelected={isSelected}
         isHovered={hoveredId === ann.id}
         isOptional={enableOptional && ann.optional === true}
+        curvesEnabled={enableCurves}
         showHandles={isSelected && selectedIds.length === 1}
         scale={scale}
         theme={resolved}

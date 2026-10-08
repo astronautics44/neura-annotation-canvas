@@ -9,6 +9,7 @@ import type { DrawingScale } from "../utils/drawingScale";
 import { getAnnotationRings, type ShapeMeta } from "../utils/booleanOps";
 import { formatSymbolSize, parseSymbolSize } from "../utils/symbolSize";
 import { formatAnnotationCalculatedSize } from "../utils/dimensions";
+import { curvesOf, nearestT, quadPoint, segmentHandle, segmentPoints, withoutCurves, type Pt } from "../utils/curves";
 import { hexToRgba, bboxToKonva, centroid, bboxHandles, nearestPointOnSegment } from "./canvasHelpers";
 import { HANDLE_RADIUS, VERTEX_RADIUS, POINT_RADIUS } from "./canvasConstants";
 import { AnnotationChip } from "./AnnotationChip";
@@ -38,6 +39,8 @@ const BBOX_CHIP_OFFSET = { dx: 0, dy: -16 };
 const POINT_CHIP_OFFSET = { dx: 10, dy: -8 };
 const SELECTION_GLOW_PX = 16;
 const EDGE_HIT_WIDTH = 12;
+/** A bent segment's edge hit area follows the curve as this many straight pieces. */
+const EDGE_CURVE_STEPS = 16;
 const LINE_HIT_WIDTH = 10;
 const ENGINE_OPACITY = 0.85;
 const HOVER_STROKE_WIDTH = 2.5;
@@ -82,6 +85,10 @@ export interface ShapeOps {
   deleteVertex: (ann: CanonicalAnnotation, vertIdx: number) => void;
   deleteBboxCorner: (ann: CanonicalAnnotation, cornerIdx: number) => void;
   hoverEdge: (hover: { annId: string; segIdx: number; pos: [number, number] } | null) => void;
+  /** Start dragging segment `segIdx`'s bend handle. */
+  beginCurveDrag: (annId: string, segIdx: number) => void;
+  /** Make segment `segIdx` straight again. */
+  straightenSegment: (ann: CanonicalAnnotation, segIdx: number) => void;
 }
 
 interface AnnotationShapeProps {
@@ -97,6 +104,12 @@ interface AnnotationShapeProps {
    * draws exactly what it drew before.
    */
   isOptional: boolean;
+  /**
+   * Bends are drawn and the segment handle bends rather than splits. The canvas
+   * passes true only when `enableCurves` is on, so a consumer that never turned
+   * it on draws, measures and edits exactly what it did before.
+   */
+  curvesEnabled: boolean;
   /** Resize and vertex handles show only when this is the one selected shape. */
   showHandles: boolean;
   /** The stage scale React last rendered with. */
@@ -122,6 +135,7 @@ function AnnotationShapeImpl({
   isSelected,
   isHovered,
   isOptional,
+  curvesEnabled,
   showHandles,
   scale,
   theme,
@@ -150,6 +164,10 @@ function AnnotationShapeImpl({
         : isEngine ? FILL_ALPHA.engine
           : FILL_ALPHA.human;
   const rings = getAnnotationRings(ann);
+  const curves = curvesEnabled ? curvesOf(ann) : undefined;
+  /** The mark as this canvas draws it: without bends it does not show. */
+  const shownAnn = curvesEnabled ? ann : withoutCurves(ann);
+  const bendable = curvesEnabled && (ann.type === "line" || ann.type === "polyline");
   const hasHoles = (shapeMeta?.rings?.length ?? 0) > 1;
 
   // Selected shapes get a glow ring behind the stroke so multi-selection is
@@ -222,31 +240,71 @@ function AnnotationShapeImpl({
   /**
    * Edge-split handles for a selected line/polyline/polygon, honoring
    * `edgeSplitMode`. `closed` wraps the last segment back to the first point.
+   *
+   * With curves on, a line's or polyline's segment handle sits on the curve's
+   * apex and bends the segment instead: drag to bend, double-click to
+   * straighten, Alt-drag to split as it did before. In `anyPoint` mode the
+   * rest of the edge still splits, along the curve.
    */
   const renderEdgeSplitHandles = (closed: boolean) => {
     const pts = ann.points;
     const segCount = closed ? pts.length : pts.length - 1;
     const segments = Array.from({ length: segCount }, (_, i) => [pts[i]!, pts[(i + 1) % pts.length]!] as const);
+    const controlOf = (i: number): Pt | null => (closed ? null : curves?.[i] ?? null);
+
+    /** The point on segment `i` nearest the pointer: on the curve when it is bent. */
+    const nearestOnEdge = (i: number, p: Pt): Pt => {
+      const [a, b] = segments[i]!;
+      const c = controlOf(i);
+      return c ? quadPoint(a, c, b, nearestT(a, c, b, p)) : nearestPointOnSegment(p, a, b);
+    };
+
+    const handleAt = (i: number, key: string) => {
+      const [a, b] = segments[i]!;
+      const [hx, hy] = segmentHandle(a, b, controlOf(i));
+      return (
+        <ScreenSpace key={key} x={hx} y={hy} scale={scale}>
+          <Circle
+            radius={HANDLE_RADIUS * 0.65}
+            fill={theme.accent}
+            stroke={theme.handleFill}
+            strokeWidth={1.5}
+            opacity={0.85}
+            onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
+              e.cancelBubble = true;
+              if (bendable && !e.evt.altKey) {
+                ops.beginCurveDrag(ann.id, i);
+                return;
+              }
+              if (e.evt.altKey) e.evt.preventDefault();
+              ops.splitEdgeAt(ann, i, [hx, hy]);
+            }}
+            onDblClick={(e: KonvaEventObject<MouseEvent>) => {
+              e.cancelBubble = true;
+              if (bendable && controlOf(i)) ops.straightenSegment(ann, i);
+            }}
+          />
+        </ScreenSpace>
+      );
+    };
 
     if (edgeSplitMode === "anyPoint") {
-      return segments.map(([[x1, y1], [x2, y2]], i) => (
+      return segments.map(([a, b], i) => (
         <Group key={`edge-${i}`}>
           <Line
-            points={[x1, y1, x2, y2]}
+            points={segmentPoints(a, b, controlOf(i), EDGE_CURVE_STEPS).flat()}
             stroke="transparent"
             strokeWidth={1}
             hitStrokeWidth={EDGE_HIT_WIDTH}
             strokeScaleEnabled={false}
             onMouseMove={(e: KonvaEventObject<MouseEvent>) => {
               e.cancelBubble = true;
-              const p = nearestPointOnSegment(ops.imagePosOf(e), [x1, y1], [x2, y2]);
-              ops.hoverEdge({ annId: ann.id, segIdx: i, pos: p });
+              ops.hoverEdge({ annId: ann.id, segIdx: i, pos: nearestOnEdge(i, ops.imagePosOf(e)) });
             }}
             onMouseLeave={() => ops.hoverEdge(null)}
             onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
               e.cancelBubble = true;
-              const p = nearestPointOnSegment(ops.imagePosOf(e), [x1, y1], [x2, y2]);
-              ops.splitEdgeAt(ann, i, p);
+              ops.splitEdgeAt(ann, i, nearestOnEdge(i, ops.imagePosOf(e)));
             }}
           />
           {edgeHoverSegIdx === i && edgeHoverPos && (
@@ -258,29 +316,12 @@ function AnnotationShapeImpl({
               />
             </ScreenSpace>
           )}
+          {bendable && handleAt(i, `bend-${i}`)}
         </Group>
       ));
     }
 
-    return segments.map(([[x1, y1], [x2, y2]], i) => {
-      const mx = (x1 + x2) / 2;
-      const my = (y1 + y2) / 2;
-      return (
-        <ScreenSpace key={`mid-${i}`} x={mx} y={my} scale={scale}>
-          <Circle
-            radius={HANDLE_RADIUS * 0.65}
-            fill={theme.accent}
-            stroke={theme.handleFill}
-            strokeWidth={1.5}
-            opacity={0.85}
-            onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
-              e.cancelBubble = true;
-              ops.splitEdgeAt(ann, i, [mx, my]);
-            }}
-          />
-        </ScreenSpace>
-      );
-    });
+    return segments.map((_, i) => handleAt(i, `mid-${i}`));
   };
 
   // "always" mode should show the annotation overlay like previous labels did,
@@ -314,7 +355,7 @@ function AnnotationShapeImpl({
   const symbolSize = parseSymbolSize(ann.meta);
   const chipConf = ann.confidence !== undefined ? ` ${Math.round(ann.confidence * 100)}%` : "";
   const chipSymbolSize = symbolSize ? ` ${formatSymbolSize(symbolSize)}` : "";
-  const calculatedSize = formatAnnotationCalculatedSize(ann, dpi, drawingScale);
+  const calculatedSize = formatAnnotationCalculatedSize(shownAnn, dpi, drawingScale);
   const chipDim = calculatedSize ? ` ${calculatedSize}` : "";
   const chipText = displayName + chipConf + chipSymbolSize + chipDim;
 
@@ -322,7 +363,7 @@ function AnnotationShapeImpl({
     <AnnotationChip x={chipX} y={chipY} dx={chipOffset.dx} dy={chipOffset.dy} scale={scale} text={chipText} theme={theme} />
   ) : showDetailCard ? (
     <AnnotationCard
-      ann={ann}
+      ann={shownAnn}
       anchorX={chipX}
       anchorY={chipY}
       scale={scale}
@@ -455,7 +496,26 @@ function AnnotationShapeImpl({
   if (ann.type === "line" || ann.type === "polyline") {
     return (
       <Group>
-        <Line points={ann.points.flatMap(([x, y]) => [x, y])} hitStrokeWidth={LINE_HIT_WIDTH} {...commonProps} />
+        {curves ? (
+          <Shape
+            hitStrokeWidth={LINE_HIT_WIDTH}
+            {...commonProps}
+            sceneFunc={(ctx, shape) => {
+              const [first, ...rest] = ann.points;
+              if (!first) return;
+              ctx.beginPath();
+              ctx.moveTo(first[0], first[1]);
+              rest.forEach(([x, y], i) => {
+                const c = curves[i];
+                if (c) ctx.quadraticCurveTo(c[0], c[1], x, y);
+                else ctx.lineTo(x, y);
+              });
+              ctx.strokeShape(shape);
+            }}
+          />
+        ) : (
+          <Line points={ann.points.flatMap(([x, y]) => [x, y])} hitStrokeWidth={LINE_HIT_WIDTH} {...commonProps} />
+        )}
         {showHandles && renderEdgeSplitHandles(false)}
         {showHandles && ann.points.map(([x, y], i) => (
           <ScreenSpace key={i} x={x} y={y} scale={scale}>

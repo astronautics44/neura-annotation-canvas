@@ -22,6 +22,7 @@ import engineC from "../fixtures/engine-c.json";
 import engineD from "../fixtures/engine-d.json";
 import { stressAnnotations } from "../fixtures/stress";
 import { optionalAnnotations, optionalGroups } from "../fixtures/optional";
+import { curveAnnotations } from "../fixtures/curves";
 
 const AnnotationCanvas = dynamic(
   () =>
@@ -69,7 +70,7 @@ const SCALE_PRESETS: { label: string; scale: DrawingScale; dpi: number }[] = [
     scale: { value: 48, unit: "in", label: '1/4"=1\'', paper: { amount: "1/4", unit: "in" }, real: { amount: "1", unit: "ft", inches: "0" } }, dpi: 300 },
 ];
 
-type Engine = "A" | "B" | "C" | "D" | "Stress" | "Optional";
+type Engine = "A" | "B" | "C" | "D" | "Stress" | "Optional" | "Curves";
 
 function getAnnotations(engine: Engine): CanonicalAnnotation[] {
   switch (engine) {
@@ -85,6 +86,8 @@ function getAnnotations(engine: Engine): CanonicalAnnotation[] {
       return stressAnnotations();
     case "Optional":
       return optionalAnnotations();
+    case "Curves":
+      return curveAnnotations();
   }
 }
 
@@ -233,7 +236,7 @@ export default function Page() {
           Engine fixture:
         </span>
 
-        {(["A", "B", "C", "D", "Stress", "Optional"] as Engine[]).map((e) => (
+        {(["A", "B", "C", "D", "Stress", "Optional", "Curves"] as Engine[]).map((e) => (
           <button
             key={e}
             onClick={() => setEngine(e)}
@@ -425,6 +428,7 @@ export default function Page() {
           showAnnotationsPanel={showAnnotationsPanel}
           enableGroups
           enableOptional
+          enableCurves
           {...(engine === "Optional" ? { groups: optionalGroups } : {})}
           annotationGroupsCollapsed
           onGroupsChange={(groups) => console.log("[annotation-engine] onGroupsChange", groups)}
