@@ -429,6 +429,7 @@ export default function Page() {
           enableGroups
           enableOptional
           enableCurves
+          enableSnap
           {...(engine === "Optional" ? { groups: optionalGroups } : {})}
           annotationGroupsCollapsed
           onGroupsChange={(groups) => console.log("[annotation-engine] onGroupsChange", groups)}

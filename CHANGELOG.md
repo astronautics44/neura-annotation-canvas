@@ -2,6 +2,32 @@
 
 All notable changes to `@astronautics44/neura-annotation-canvas`.
 
+## 2.7.0
+
+Snapping, the PlanSwift way: a point placed near the end of a line or polyline
+lands exactly on it. Behind `enableSnap`; no type changed.
+
+### Added
+
+- **`enableSnap`**, default `false`. With it on, any drawing tool's click lands
+  on the start or end of a visible line or polyline when the pointer is within
+  10 screen pixels of it, and a red square marks the end it will land on. A
+  dragged vertex snaps the same way, to other marks' ends.
+- **`F3` and a Snap button in the status bar** turn snapping off and on; it
+  starts on. Holding `Alt/Option` suspends it for one click or drag.
+- The snapped mark is a new annotation of its own: it shares the point, and the
+  mark it snapped to is unchanged.
+
+### Fixed
+
+- The status bar's size readout ignores `curves` when `enableCurves` is off,
+  matching the chip and card.
+
+### Unchanged
+
+Without `enableSnap`, points land where they are clicked and `F3` is not
+bound. Only line and polyline ends are snap targets.
+
 ## 2.6.0
 
 Arcs drawn the PlanSwift way: `A`, the arc's middle point, its end. Behind

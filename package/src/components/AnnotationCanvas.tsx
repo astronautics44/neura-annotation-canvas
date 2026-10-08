@@ -58,7 +58,7 @@ import {
 import {
   hexToRgba, bboxToKonva, centroid, bboxHandles,
   slugify, annotationReducer, getAnnotationBounds, boxesIntersect, allOptional,
-  optionalMarks, isShownOnCanvas, shifted,
+  optionalMarks, isShownOnCanvas, shifted, nearestEndpoint,
 } from "./canvasHelpers";
 import {
   bendSegment, clickPathDraft, curvesOf, distanceToChord, insertVertex, moveVertex, pathBounds, previewControl,
@@ -78,6 +78,10 @@ const DEFAULT_SHAPE_COLOR = "#ffffff";
  * segment straight again.
  */
 const CURVE_SNAP_PX = 6;
+/** How near an endpoint, in screen pixels, the pointer must come to snap to it. */
+const SNAP_RADIUS_PX = 10;
+/** The square drawn on the endpoint the pointer has snapped to, in screen pixels. */
+const SNAP_MARKER_SIZE = 10;
 /** In-progress drawing overlay, in screen pixels. */
 const DRAW_DASH = [4, 4];
 const DRAW_VERTEX_RADIUS = 4;
@@ -316,6 +320,17 @@ interface Props {
    */
   enableCurves?: boolean;
   /**
+   * Snapping, as PlanSwift has it. Default false.
+   *
+   * With it on, a click that places a point while drawing — any tool — lands
+   * exactly on the end of an existing line or polyline when the pointer comes
+   * within 10 screen pixels of one, and a square marks the end it will land
+   * on. Dragging a vertex snaps the same way. The new mark is its own
+   * annotation; it only shares the point. `F3` or the magnet in the status
+   * bar turns snapping off and on, and holding Alt/Option suspends it.
+   */
+  enableSnap?: boolean;
+  /**
    * What happens when the user deletes a vertex from a polygon that has only
    * three left — the point at which a polygon can no longer stay a polygon.
    * - "block"    — the deletion is refused, polygons always keep ≥3 vertices (default)
@@ -537,6 +552,7 @@ export function AnnotationCanvas({
   countFinishAction = "enter",
   edgeSplitMode = "midpoint",
   enableCurves = false,
+  enableSnap = false,
   polygonMinVertexAction = "block",
   dpi,
   drawingScale: drawingScaleProp,
@@ -851,6 +867,11 @@ export function AnnotationCanvas({
    * The bend handle being dragged. `moved` holds off the undo snapshot until
    * the pointer actually moves, so the press of a double-click is not a step.
    */
+  /** Snapping is on: the prop allows it and the person has not turned it off. */
+  const [snapOn, setSnapOn] = useState(true);
+  const snapActive = enableSnap && snapOn;
+  /** The endpoint the pointer has snapped to, for the marker. Changes only when the target does. */
+  const [snapTarget, setSnapTarget] = useState<[number, number] | null>(null);
   const [draggingCurve, setDraggingCurve] = useState<{ annId: string; segIdx: number; moved: boolean } | null>(null);
   const [edgeHover, setEdgeHover] = useState<{ annId: string; segIdx: number; pos: [number, number] } | null>(null);
   /** Drag-box multi-select while the select tool is active. */
@@ -1365,6 +1386,13 @@ export function AnnotationCanvas({
         cancelComment();
         return;
       }
+      // PlanSwift's snap key.
+      if (e.key === "F3" && enableSnap) {
+        e.preventDefault();
+        setSnapOn((on) => !on);
+        setSnapTarget(null);
+        return;
+      }
       // Escape while an arc is armed drops only the arc, not the path.
       if (e.key === "Escape" && (draw.phase === "polyline-drawing" || draw.phase === "line-drawing") && draw.arc) {
         setDraw({ ...draw, arc: null });
@@ -1462,7 +1490,7 @@ export function AnnotationCanvas({
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp); };
-  }, [draw, enableGroups, enableOptional, handleToggleOptional, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelIds, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction, hiddenClasses, optionalHidden, labels, setActiveLabel, enableActiveLabel, tool, enableComments, activeCommentId, beginComment, deleteComment, selectComment, onCommentDelete, pendingComment, cancelComment, enableCurves]);
+  }, [draw, enableGroups, enableOptional, handleToggleOptional, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelIds, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction, hiddenClasses, optionalHidden, labels, setActiveLabel, enableActiveLabel, tool, enableComments, activeCommentId, beginComment, deleteComment, selectComment, onCommentDelete, pendingComment, cancelComment, enableCurves, enableSnap]);
 
   // ---------------------------------------------------------------------------
   // Stage event handlers
@@ -1475,6 +1503,16 @@ export function AnnotationCanvas({
     if (!ptr) return [0, 0];
     return screenToImage(viewportRef.current, ptr.x, ptr.y);
   }, []);
+
+  /**
+   * Where a point placed at `raw` lands: on the nearest visible line or
+   * polyline end within reach when snapping is active, or where it was.
+   */
+  const snapPoint = useCallback((raw: [number, number], suspended: boolean, exclude?: string): [number, number] => {
+    if (!snapActive || suspended) return raw;
+    const shown = annotationsRef.current.filter((a) => isShownOnCanvas(a, hiddenClasses, optionalHidden));
+    return nearestEndpoint(shown, raw, SNAP_RADIUS_PX / viewportRef.current.scale, exclude) ?? raw;
+  }, [snapActive, hiddenClasses, optionalHidden]);
 
   /**
    * Inserts a new vertex at `pos` after segment index `segIdx`, then starts
@@ -1562,7 +1600,7 @@ export function AnnotationCanvas({
       return;
     }
     const isStageClick = e.target === e.target.getStage() || e.target.name() === "bg-image";
-    const imgPos = getImagePos(e);
+    let imgPos = getImagePos(e);
 
     // Comment mode is deliberately above the readonly gate: leaving a note is
     // not an edit to the drawing.
@@ -1575,6 +1613,8 @@ export function AnnotationCanvas({
     }
 
     if (readonly) return;
+
+    if (tool !== "select") imgPos = snapPoint(imgPos, e.evt.altKey);
 
     if (tool === "select") {
       if (isStageClick) {
@@ -1656,14 +1696,21 @@ export function AnnotationCanvas({
       }
       return;
     }
-  }, [shouldPan, readonly, tool, draw, getImagePos, polylineFinishAction, countFinishAction, beginComment]);
+  }, [shouldPan, readonly, tool, draw, getImagePos, polylineFinishAction, countFinishAction, beginComment, snapPoint]);
 
   const handleStageMouseMove = useCallback((e: KonvaEventObject<MouseEvent>) => {
     const stage = stageRef.current;
     if (!stage) return;
     const ptr = stage.getPointerPosition();
     if (!ptr) return;
-    const imgPos = screenToImage(viewportRef.current, ptr.x, ptr.y);
+    const rawPos = screenToImage(viewportRef.current, ptr.x, ptr.y);
+    // Snapping applies to points being placed: by a drawing tool, or by a
+    // dragged vertex. Selecting, moving and panning use the raw position.
+    const placing = (!readonly && tool !== "select" && tool !== "comment" && !panMode) || draggingVertex !== null;
+    const snapped = placing ? snapPoint(rawPos, e.evt.altKey, draggingVertex?.annId) : rawPos;
+    const target = snapped !== rawPos ? snapped : null;
+    setSnapTarget((prev) => (prev?.[0] === target?.[0] && prev?.[1] === target?.[1] ? prev : target));
+    const imgPos = placing ? snapped : rawPos;
     cursor.set(imgPos);
 
     if (panStart.current) {
@@ -1742,7 +1789,7 @@ export function AnnotationCanvas({
         dispatch({ type: "UPDATE", payload: updated });
       }
     }
-  }, [draw, cursor, applyViewport, draggingAnnotation, draggingHandle, draggingVertex, draggingCurve, snapshot, selectedIds, dispatch, marquee, enableCurves]);
+  }, [draw, cursor, applyViewport, draggingAnnotation, draggingHandle, draggingVertex, draggingCurve, snapshot, selectedIds, dispatch, marquee, enableCurves, readonly, tool, panMode, snapPoint]);
 
   const handleStageMouseUp = useCallback((e: KonvaEventObject<MouseEvent>) => {
     if (panStart.current) {
@@ -1773,7 +1820,7 @@ export function AnnotationCanvas({
     }
 
     if (readonly) return;
-    const imgPos = getImagePos(e);
+    const imgPos = snapPoint(getImagePos(e), e.evt.altKey);
     if (draw.phase === "bbox-drawing") {
       const { w, h } = bboxToKonva([draw.start, imgPos]);
       if (w < 8 || h < 8) { setDraw({ phase: "idle" }); return; }
@@ -1789,7 +1836,7 @@ export function AnnotationCanvas({
     setDraggingHandle(null);
     setDraggingVertex(null);
     setDraggingCurve(null);
-  }, [readonly, draw, getImagePos, marquee, hiddenClasses, optionalHidden, enableCurves]);
+  }, [readonly, draw, getImagePos, marquee, hiddenClasses, optionalHidden, enableCurves, snapPoint]);
 
   const handleStageContextMenu = useCallback((e: KonvaEventObject<MouseEvent>) => {
     if (polylineFinishAction === "right-click" && draw.phase === "polyline-drawing" && draw.pts.length >= 2) {
@@ -2682,6 +2729,15 @@ export function AnnotationCanvas({
               {img && <KonvaImage image={img} x={0} y={0} width={img.width} height={img.height} name="bg-image" />}
               {visibleAnnotations.map(renderAnnotation)}
               {renderDraw()}
+              {snapActive && snapTarget && (tool !== "select" || draggingVertex) && (
+                <ScreenSpace x={snapTarget[0]} y={snapTarget[1]} scale={scale} listening={false}>
+                  <Rect
+                    x={-SNAP_MARKER_SIZE / 2} y={-SNAP_MARKER_SIZE / 2}
+                    width={SNAP_MARKER_SIZE} height={SNAP_MARKER_SIZE}
+                    stroke={resolved.danger} strokeWidth={2}
+                  />
+                </ScreenSpace>
+              )}
             </Layer>
             {/* Cues live in their own layer so a marker over a dense stack of
                 shapes is always the thing you click. */}
@@ -2896,7 +2952,7 @@ export function AnnotationCanvas({
           {/* Real-world size of the single selected annotation — visible at any zoom */}
           {selectedIds.length === 1 && (() => {
             const ann = annotations.find((a) => a.id === selectedIds[0]);
-            const dim = ann ? formatAnnotationCalculatedSize(ann, dpi, drawingScale) : "";
+            const dim = ann ? formatAnnotationCalculatedSize(enableCurves ? ann : withoutCurves(ann), dpi, drawingScale) : "";
             return dim ? (
               <span style={{ fontFamily: "'JetBrains Mono','Fira Code',monospace", color: "var(--ae-text-primary)" }}>{dim}</span>
             ) : null;
@@ -2908,6 +2964,24 @@ export function AnnotationCanvas({
                 <span style={{ color: "var(--ae-text-muted)" }}> · Del to delete</span>
               )}
             </span>
+          )}
+          {enableSnap && (
+            <button
+              title={snapOn ? "Snap to line ends: on (F3)" : "Snap to line ends: off (F3)"}
+              aria-pressed={snapOn}
+              onClick={() => { setSnapOn((on) => !on); setSnapTarget(null); }}
+              style={{
+                ...zoomBtnStyle,
+                width: "auto",
+                padding: "0 6px",
+                gap: 4,
+                background: snapOn ? "var(--ae-accent)" : "transparent",
+                color: snapOn ? "#ffffff" : "var(--ae-text-secondary)",
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 2v6a5 5 0 0 0 10 0V2" /><path d="M3 5h3M10 5h3" /></svg>
+              Snap
+            </button>
           )}
           <CursorReadout cursor={cursor} />
           {showFullscreen && (
