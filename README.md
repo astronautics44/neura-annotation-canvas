@@ -188,6 +188,7 @@ interface AnnotationCanvasProps {
   onGroupsChange?: (groups: AnnotationGroup[]) => void;
   enableOptional?: boolean; // mark annotations optional, drawn dashed; default: false
   enableCurves?: boolean; // bend line / polyline segments by their middle handle; default: false
+  enableSnap?: boolean; // snap placed points to line / polyline ends, F3 toggles; default: false
 
   // Label chip visibility
   labelVisibility?: "always" | "hover" | "selected" | "hover+selected"; // default: "always"
@@ -1510,6 +1511,38 @@ edges. Without `enableCurves`, `curves` is neither drawn nor measured on the
 canvas, the handle splits as it always has, and editing the vertices of a mark
 that carries `curves` drops them, since the reviewer edited the straight mark
 they could see.
+
+### Snapping to line ends — `enableSnap`
+
+```tsx
+<AnnotationCanvas enableSnap ... />
+```
+
+Snapping as PlanSwift has it: a point placed near the end of an existing line or
+polyline lands **exactly** on it, so a run that carries on from where the last
+one stopped shares its endpoint, with no gap and no overlap.
+
+- While a drawing tool is active, bring the pointer within **10 screen pixels**
+  of the start or end of any visible line or polyline. A **red square** marks
+  the end, and the status bar coordinates read the end's.
+- Click, and the point lands on it. Every tool snaps: the start, vertices and
+  arc points of a line or polyline, polygon vertices, bbox corners, a point,
+  count points, a circle's centre and radius.
+- **Dragging a vertex** snaps the same way, to the ends of other marks, so two
+  marks can be joined after the fact.
+- The new mark is **its own annotation**, with its own label. It shares the
+  point; it does not extend the mark it snapped to.
+
+| Control | Effect |
+|---|---|
+| `F3`, or **Snap** in the status bar | Turns snapping off and on. It starts on |
+| Hold `Alt/Option` | Suspends snapping for that click or drag |
+
+Only the two ends of a line or polyline are targets: inner vertices, polygons,
+bboxes, circles and points are not, and neither are lines in the drawing image
+itself. Marks in a hidden class, or optional marks while they are hidden, are
+not targets. Snapping changes only where a point lands; the payload has
+nothing new in it. Without `enableSnap` nothing snaps and `F3` is not bound.
 
 ### Starting with every group collapsed — `annotationGroupsCollapsed`
 

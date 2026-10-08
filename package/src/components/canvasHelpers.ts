@@ -152,6 +152,32 @@ export function shifted(a: CanonicalAnnotation, delta: [number, number]): Canoni
   return { ...moved, curves: a.curves.map((c) => (c ? move(c) : null)) };
 }
 
+/**
+ * The end of a line or polyline nearest `p` within `radius`, or null. What
+ * snapping lands a click on: the start and end of every open path, never an
+ * inner vertex. `exclude` leaves out the mark whose own vertex is being
+ * dragged.
+ */
+export function nearestEndpoint(
+  annotations: readonly CanonicalAnnotation[],
+  p: [number, number],
+  radius: number,
+  exclude?: string,
+): [number, number] | null {
+  let best: [number, number] | null = null;
+  let bestD = radius * radius;
+  for (const ann of annotations) {
+    if (ann.id === exclude || (ann.type !== "line" && ann.type !== "polyline")) continue;
+    const ends = [ann.points[0], ann.points[ann.points.length - 1]];
+    for (const end of ends) {
+      if (!end) continue;
+      const d = (end[0] - p[0]) ** 2 + (end[1] - p[1]) ** 2;
+      if (d <= bestD) { bestD = d; best = [end[0], end[1]]; }
+    }
+  }
+  return best;
+}
+
 export function annotationReducer(state: CanonicalAnnotation[], action: import("./canvasConstants").Action): CanonicalAnnotation[] {
   switch (action.type) {
     case "LOAD": return action.payload;
