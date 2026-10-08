@@ -30,16 +30,26 @@ export const zoomBtnStyle: React.CSSProperties = {
   transition: "background 0.1s, color 0.1s",
 };
 
+/**
+ * An arc being drawn, PlanSwift style: `A` arms it, the next click places the
+ * point the arc passes through at its middle, and the click after that its
+ * end. `mid` is null until that first click.
+ */
+export interface ArcDraft {
+  mid: [number, number] | null;
+}
+
 export type DrawState =
   | { phase: "idle" }
   | { phase: "bbox-drawing"; start: [number, number]; cur: [number, number] }
   | { phase: "bbox-pending"; points: [[number, number], [number, number]]; pos: [number, number] }
   | { phase: "polygon-drawing"; pts: [number, number][]; cur: [number, number] }
   | { phase: "polygon-pending"; pts: [number, number][]; pos: [number, number] }
-  | { phase: "polyline-drawing"; pts: [number, number][]; cur: [number, number] }
-  | { phase: "polyline-pending"; pts: [number, number][]; pos: [number, number] }
-  | { phase: "line-drawing"; start: [number, number]; cur: [number, number] }
-  | { phase: "line-pending"; points: [[number, number], [number, number]]; pos: [number, number] }
+  /** `curves` holds one entry per placed segment, as `CanonicalAnnotation.curves` does. */
+  | { phase: "polyline-drawing"; pts: [number, number][]; cur: [number, number]; curves: ([number, number] | null)[]; arc: ArcDraft | null }
+  | { phase: "polyline-pending"; pts: [number, number][]; pos: [number, number]; curves: ([number, number] | null)[] }
+  | { phase: "line-drawing"; start: [number, number]; cur: [number, number]; arc: ArcDraft | null }
+  | { phase: "line-pending"; points: [[number, number], [number, number]]; pos: [number, number]; curve: [number, number] | null }
   | { phase: "point-pending"; pt: [number, number]; pos: [number, number] }
   | { phase: "circle-drawing"; center: [number, number]; cur: [number, number] }
   | { phase: "circle-pending"; points: [[number, number], [number, number]]; pos: [number, number] }

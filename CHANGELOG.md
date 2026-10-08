@@ -2,6 +2,32 @@
 
 All notable changes to `@astronautics44/neura-annotation-canvas`.
 
+## 2.6.0
+
+Arcs drawn the PlanSwift way: `A`, the arc's middle point, its end. Behind
+`enableCurves`, like the rest of curves; no type or prop changed.
+
+### Added
+
+- **`A` while drawing a line or polyline** arms an arc for the next segment.
+  The next click places the arc's middle point, the click after it the end,
+  and the segment becomes an arc through all three. Drawing carries on
+  straight; press `A` again for the next arc.
+- **A live preview** bends through the middle point to the pointer until the
+  end is clicked, and the hint reads what to click next.
+- **`Cmd/Ctrl+Z` while drawing takes back the last click** — the arc's middle
+  point, then the armed arc, then the last vertex — instead of undoing the last
+  edit.
+- **`Esc` with an arc armed drops only the arc**; a second `Esc` cancels the
+  drawing as before.
+
+### Unchanged
+
+The result is the same `curves` entry 2.5.0 stores, so consumers need no
+change. Bending a segment afterwards by its handle works as in 2.5.0. Without
+`enableCurves`, `A`, `Cmd/Ctrl+Z` and `Esc` while drawing behave exactly as
+before.
+
 ## 2.5.0
 
 Curved segments on lines and polylines. A contract change, additive:

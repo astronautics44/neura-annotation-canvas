@@ -299,3 +299,50 @@ export function withoutCurves(ann: CanonicalAnnotation): CanonicalAnnotation {
   const { curves: _drop, ...rest } = ann;
   return rest;
 }
+
+/**
+ * An open path being drawn, with PlanSwift's arc mode. `curves` has one entry
+ * per placed segment. `arc` is set once `A` is pressed: the next click places
+ * the point the arc passes through at its middle, the click after that its
+ * end, and the arc is spent.
+ */
+export interface PathDraft {
+  pts: Pt[];
+  curves: (Pt | null)[];
+  arc: { mid: Pt | null } | null;
+}
+
+/** One click while drawing. */
+export function clickPathDraft(draft: PathDraft, p: Pt): PathDraft {
+  const last = draft.pts[draft.pts.length - 1];
+  if (draft.arc && last) {
+    if (!draft.arc.mid) return { ...draft, arc: { mid: p } };
+    return { pts: [...draft.pts, p], curves: [...draft.curves, controlThrough(last, p, draft.arc.mid)], arc: null };
+  }
+  return { pts: [...draft.pts, p], curves: last ? [...draft.curves, null] : draft.curves, arc: null };
+}
+
+/** `A`: arm the arc for the next segment, or disarm it. */
+export function toggleArcDraft(draft: PathDraft): PathDraft {
+  return { ...draft, arc: draft.arc ? null : { mid: null } };
+}
+
+/**
+ * Takes back the last click: an arc's middle point first, then the armed arc,
+ * then the last vertex with its segment. Null when nothing would be left.
+ */
+export function undoPathDraft(draft: PathDraft): PathDraft | null {
+  if (draft.arc?.mid) return { ...draft, arc: { mid: null } };
+  if (draft.arc) return { ...draft, arc: null };
+  if (draft.pts.length <= 1) return null;
+  return { pts: draft.pts.slice(0, -1), curves: draft.curves.slice(0, -1), arc: null };
+}
+
+/**
+ * The control point of the segment the pointer is drawing, while an arc has
+ * its middle point: the preview bends through it to the pointer.
+ */
+export function previewControl(draft: PathDraft, cur: Pt): Pt | null {
+  const last = draft.pts[draft.pts.length - 1];
+  return last && draft.arc?.mid ? controlThrough(last, cur, draft.arc.mid) : null;
+}
