@@ -7,6 +7,7 @@ import type { CanonicalAnnotation } from "../types/canonical";
 import type { CommentAnchor } from "../types/comments";
 import { getAnnotationBounds } from "./canvasHelpers";
 import { ScreenSpace } from "./ScreenSpace";
+import { markerColors } from "./markerColors";
 
 /**
  * The comment cue layer.
@@ -124,6 +125,7 @@ export function CommentMarkers({
         const isSelected = selectedId === anchor.id;
         const isHovered = hoveredId === anchor.id;
         const stroke = anchor.resolved ? muted : accent;
+        const colors = markerColors(stroke, isSelected);
         // Bubble centre, in screen px from the anchor and in image px.
         const cx = ox + CENTER.x * K;
         const cy = oy + CENTER.y * K;
@@ -153,7 +155,7 @@ export function CommentMarkers({
                 data={BUBBLE_PATH}
                 // Opaque interior, so the outline never has to fight the linework
                 // showing through it.
-                fill="#ffffff"
+                fill={colors.fill}
                 stroke={stroke}
                 strokeWidth={isSelected ? 3.4 : isHovered ? 2.9 : 2.4}
                 lineJoin="round"
@@ -172,7 +174,7 @@ export function CommentMarkers({
                   fontSize={10.5}
                   fontStyle="700"
                   fontFamily="system-ui,-apple-system,'Segoe UI',sans-serif"
-                  fill={stroke}
+                  fill={colors.count}
                   align="center"
                   verticalAlign="middle"
                   listening={false}

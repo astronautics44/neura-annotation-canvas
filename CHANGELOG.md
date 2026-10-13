@@ -2,6 +2,17 @@
 
 All notable changes to `@astronautics44/neura-annotation-canvas`.
 
+## 2.7.1
+
+The open thread's marker is filled. No prop or type changed.
+
+### Changed
+
+- **A selected comment marker is inverted**: filled with its outline colour,
+  its count in white. At rest a marker is still white with a coloured outline
+  and count, so the thread being read stands out from every other cue on the
+  sheet instead of differing only by a thicker outline.
+
 ## 2.7.0
 
 Snapping, the PlanSwift way: a point placed near the end of a line or polyline
