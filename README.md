@@ -1202,6 +1202,9 @@ a loud red outline over an opaque fill so they stay legible over dense linework.
 Position is what tells them apart: a free-form thread rests its tail on the point
 it marks, an attached thread is centred on its shape's top-right corner.
 
+The selected thread's marker is inverted: filled with its colour, its count in
+white, so the one whose thread is open stands out from the rest.
+
 Both are drawn at a constant **screen** size, so they do not grow with zoom, and
 unlike label chips they are **never hidden at low zoom** — the marker is the only
 signal a thread exists, and zoomed out is when you are hunting for one.
