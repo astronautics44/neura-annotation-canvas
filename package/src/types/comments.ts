@@ -25,7 +25,11 @@ export interface CommentAnchor {
   target: CommentTarget;
   /** Thread length. Rendered inside the marker when greater than 1. */
   count?: number;
-  /** Resolved threads render dimmed, in the muted colour, but stay clickable. */
+  /**
+   * Resolved threads render at full strength in the `success` colour with a
+   * check badge, so they stay as findable as open ones. Since 2.7.2; before,
+   * they were dimmed in the muted grey.
+   */
   resolved?: boolean;
   /** Passthrough — the package stores nothing and reads nothing from this. */
   meta?: Record<string, unknown>;

@@ -2,6 +2,18 @@
 
 All notable changes to `@astronautics44/neura-annotation-canvas`.
 
+## 2.7.2
+
+A resolved comment marker is no longer greyed out. No prop or type changed.
+
+### Changed
+
+- **A resolved thread's marker is drawn at full strength**, outlined in the
+  theme's `success` colour with a small check badge, instead of at half opacity
+  in the muted grey. A dimmed marker was the one cue on a sheet that could not
+  be found, and an answered question still has to be. Open threads stay in
+  `danger`.
+
 ## 2.7.1
 
 The open thread's marker is filled. No prop or type changed.

@@ -2748,7 +2748,7 @@ export function AnnotationCanvas({
                   visibleAnnotations={visibleAnnotations}
                   scale={scale}
                   accent={resolved.danger}
-                  muted={resolved.textSecondary}
+                  resolvedColor={resolved.success}
                   selectedId={activeCommentId}
                   hoveredId={hoveredCommentId}
                   draftAt={draftComment}
