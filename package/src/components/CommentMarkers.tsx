@@ -7,7 +7,7 @@ import type { CanonicalAnnotation } from "../types/canonical";
 import type { CommentAnchor } from "../types/comments";
 import { getAnnotationBounds } from "./canvasHelpers";
 import { ScreenSpace } from "./ScreenSpace";
-import { markerColors } from "./markerColors";
+import { markerColors, markerStroke } from "./markerColors";
 
 /**
  * The comment cue layer.
@@ -39,6 +39,9 @@ const CENTER = { x: 12.2, y: 11 };
 /** Path-space corner the delete affordance hangs off. */
 const DELETE_AT = { x: 19.5, y: 4 };
 const DELETE_R = 6.5;
+/** Path-space corner the resolved check badge sits on, opposite the delete affordance. */
+const CHECK_AT = { x: 20, y: 18.5 };
+const CHECK_R = 6;
 const LABEL_BOX = { w: 20, h: 12 };
 
 interface MarkerGeom {
@@ -88,8 +91,8 @@ interface Props {
   scale: number;
   /** Outline colour for an open thread — loud by design. */
   accent: string;
-  /** Outline colour for a resolved thread. */
-  muted: string;
+  /** Outline and badge colour for a resolved thread. Full strength, never dimmed. */
+  resolvedColor: string;
   selectedId: string | null;
   hoveredId: string | null;
   /** Draft position (image coords) for a thread the consumer has not stored yet. */
@@ -107,7 +110,7 @@ export function CommentMarkers({
   visibleAnnotations,
   scale,
   accent,
-  muted,
+  resolvedColor,
   selectedId,
   hoveredId,
   draftAt,
@@ -124,7 +127,7 @@ export function CommentMarkers({
         const label = countLabel(anchor);
         const isSelected = selectedId === anchor.id;
         const isHovered = hoveredId === anchor.id;
-        const stroke = anchor.resolved ? muted : accent;
+        const stroke = markerStroke(anchor.resolved === true, accent, resolvedColor);
         const colors = markerColors(stroke, isSelected);
         // Bubble centre, in screen px from the anchor and in image px.
         const cx = ox + CENTER.x * K;
@@ -137,7 +140,6 @@ export function CommentMarkers({
         return (
           <Group
             key={anchor.id}
-            opacity={anchor.resolved && !isSelected ? 0.5 : 1}
             onMouseEnter={() => onHover(anchor.id)}
             onMouseLeave={() => onHover(null)}
             onMouseDown={(e: KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; }}
@@ -179,6 +181,32 @@ export function CommentMarkers({
                   verticalAlign="middle"
                   listening={false}
                 />
+              )}
+
+              {/* Resolved: a check badge as well as the colour, so the state
+                  never rests on colour alone. */}
+              {anchor.resolved && (
+                <Group listening={false}>
+                  <Circle
+                    x={ox + CHECK_AT.x * K}
+                    y={oy + CHECK_AT.y * K}
+                    radius={CHECK_R}
+                    fill={resolvedColor}
+                    stroke="#ffffff"
+                    strokeWidth={1.2}
+                  />
+                  <Line
+                    points={[
+                      ox + CHECK_AT.x * K - 2.6, oy + CHECK_AT.y * K + 0.1,
+                      ox + CHECK_AT.x * K - 0.7, oy + CHECK_AT.y * K + 2,
+                      ox + CHECK_AT.x * K + 2.7, oy + CHECK_AT.y * K - 1.9,
+                    ]}
+                    stroke="#ffffff"
+                    strokeWidth={1.6}
+                    lineCap="round"
+                    lineJoin="round"
+                  />
+                </Group>
               )}
 
               {/* Delete affordance — only on hover, and only when wired up. */}

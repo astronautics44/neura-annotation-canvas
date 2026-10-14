@@ -1171,7 +1171,7 @@ interface CommentAnchor {
   id: string;              // your thread id
   target: CommentTarget;
   count?: number;          // rendered inside the marker when > 1
-  resolved?: boolean;      // dimmed, still clickable
+  resolved?: boolean;      // success colour + check badge, never dimmed
   meta?: Record<string, unknown>;
 }
 
@@ -1209,9 +1209,10 @@ Both are drawn at a constant **screen** size, so they do not grow with zoom, and
 unlike label chips they are **never hidden at low zoom** — the marker is the only
 signal a thread exists, and zoomed out is when you are hunting for one.
 
-The colour comes from the `danger` theme token (resolved threads use
-`textSecondary`), so overriding `danger` rethemes the markers. No new theme key
-was added.
+The colour comes from the `danger` theme token, so overriding `danger`
+rethemes the markers. A resolved thread is drawn at full strength in `success`
+with a small check badge, never dimmed, so an answered question is as easy to
+find as an open one. No new theme key was added.
 
 ### Wiring it up
 
