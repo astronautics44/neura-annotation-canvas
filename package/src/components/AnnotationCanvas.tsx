@@ -59,6 +59,7 @@ import {
   hexToRgba, bboxToKonva, centroid, bboxHandles,
   slugify, annotationReducer, getAnnotationBounds, boxesIntersect, allOptional,
   optionalMarks, isShownOnCanvas, shifted, nearestEndpoint,
+  toolForKey,
 } from "./canvasHelpers";
 import {
   bendSegment, clickPathDraft, curvesOf, distanceToChord, insertVertex, moveVertex, pathBounds, previewControl,
@@ -1412,13 +1413,8 @@ export function AnnotationCanvas({
         return;
       }
       if (e.key === "v" || e.key === "V") { setPanMode(false); setTool("select"); setDraw({ phase: "idle" }); return; }
-      if (e.key === "b" || e.key === "B") { setPanMode(false); setTool("bbox"); setDraw({ phase: "idle" }); return; }
-      if (e.key === "p" || e.key === "P") { setPanMode(false); setTool("polygon"); setDraw({ phase: "idle" }); return; }
-      if (e.key === "y" || e.key === "Y") { setPanMode(false); setTool("polyline"); setDraw({ phase: "idle" }); return; }
-      if (e.key === "l" || e.key === "L") { setPanMode(false); setTool("line"); setDraw({ phase: "idle" }); return; }
-      if (e.key === "n" || e.key === "N") { setPanMode(false); setTool("point"); setDraw({ phase: "idle" }); return; }
-      if (e.key === "c" || e.key === "C") { setPanMode(false); setTool("circle"); setDraw({ phase: "idle" }); return; }
-      if (e.key === "t" || e.key === "T") { setPanMode(false); setTool("count"); setDraw({ phase: "idle" }); return; }
+      const keyedTool = toolForKey(e.key, tools);
+      if (keyedTool) { setPanMode(false); setTool(keyedTool); setDraw({ phase: "idle" }); return; }
 
       // Shape boolean ops (area shapes only)
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && !readonly) {
@@ -1490,7 +1486,7 @@ export function AnnotationCanvas({
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp); };
-  }, [draw, enableGroups, enableOptional, handleToggleOptional, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelIds, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction, hiddenClasses, optionalHidden, labels, setActiveLabel, enableActiveLabel, tool, enableComments, activeCommentId, beginComment, deleteComment, selectComment, onCommentDelete, pendingComment, cancelComment, enableCurves, enableSnap]);
+  }, [tools, draw, enableGroups, enableOptional, handleToggleOptional, enableSelectAll, fitToScreen, handleRedo, handleUndo, onSave, selectedIds, dispatchAndNotify, clipboard, cloneAnnotations, readonly, snapshot, relabelIds, handleMerge, handleSubtract, handleIntersect, handleCutHole, handleToggleFill, polylineFinishAction, countFinishAction, hiddenClasses, optionalHidden, labels, setActiveLabel, enableActiveLabel, tool, enableComments, activeCommentId, beginComment, deleteComment, selectComment, onCommentDelete, pendingComment, cancelComment, enableCurves, enableSnap]);
 
   // ---------------------------------------------------------------------------
   // Stage event handlers
