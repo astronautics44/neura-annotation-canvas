@@ -1,4 +1,4 @@
-import type { CanonicalAnnotation } from "../types/canonical";
+import type { CanonicalAnnotation, ToolType } from "../types/canonical";
 
 export function hexToRgba(hex: string, alpha: number): string {
   const r = parseInt(hex.slice(1, 3), 16);
@@ -239,4 +239,24 @@ export function annotationReducer(state: CanonicalAnnotation[], action: import("
       return next;
     }
   }
+}
+
+const TOOL_KEYS: Readonly<Record<string, ToolType>> = {
+  b: "bbox",
+  p: "polygon",
+  y: "polyline",
+  l: "line",
+  n: "point",
+  c: "circle",
+  t: "count",
+};
+
+/**
+ * The drawing tool a key switches to, or undefined. A tool left out of `tools` has
+ * no key either: hiding its button while `B` still drew boxes left a consumer's
+ * subset as a suggestion.
+ */
+export function toolForKey(key: string, tools?: readonly ToolType[]): ToolType | undefined {
+  const tool = TOOL_KEYS[key.toLowerCase()];
+  return tool && (!tools || tools.includes(tool)) ? tool : undefined;
 }
