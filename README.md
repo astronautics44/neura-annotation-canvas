@@ -189,6 +189,7 @@ interface AnnotationCanvasProps {
   enableOptional?: boolean; // mark annotations optional, drawn dashed; default: false
   enableCurves?: boolean; // bend line / polyline segments by their middle handle; default: false
   enableSnap?: boolean; // snap placed points to line / polyline ends, F3 toggles; default: false
+  showLineLengths?: boolean; // live real-world length on each segment while drawing a line / polyline; default: false
 
   // Label chip visibility
   labelVisibility?: "always" | "hover" | "selected" | "hover+selected"; // default: "always"
@@ -1547,6 +1548,28 @@ bboxes, circles and points are not, and neither are lines in the drawing image
 itself. Marks in a hidden class, or optional marks while they are hidden, are
 not targets. Snapping changes only where a point lands; the payload has
 nothing new in it. Without `enableSnap` nothing snaps and `F3` is not bound.
+
+### Live line lengths while drawing — `showLineLengths`
+
+```tsx
+<AnnotationCanvas showLineLengths dpi={150} drawingScale={{ value: 8, unit: "ft" }} ... />
+```
+
+While a **line** or **polyline** is being drawn, each segment carries its
+real-world length, written along it at its middle and kept upright. The segment
+following the pointer updates live as it grows, from the first move: `0"`, `8"`,
+`1'1"`, `3'0"`. A polyline's placed segments keep theirs until it is finished.
+
+- An imperial scale (`in` / `ft`) reads in **feet and inches to the nearest
+  inch**; under a foot it is inches alone. A metric scale reads as the size chip
+  does (`2.54m`).
+- An arc segment reads its true curve length, not its chord.
+- Labels are screen-sized, so they read the same at any zoom, and they take no
+  clicks.
+- Once the shape is finished the labels go; finished marks look as they did.
+
+The length comes from `dpi` and `drawingScale` (see [Drawing scale](#drawing-scale)).
+Without both, nothing is drawn. Without `showLineLengths` nothing changes.
 
 ### Starting with every group collapsed — `annotationGroupsCollapsed`
 

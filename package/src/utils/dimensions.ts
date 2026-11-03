@@ -1,6 +1,7 @@
 import type { CanonicalAnnotation } from "../types/canonical";
 import { bboxToKonva } from "../components/canvasHelpers";
 import { annotationPixelArea, annotationPixelPerimeter, isAreaAnnotation } from "./booleanOps";
+import { formatFeetInches } from "./lengthLabel";
 
 export type DrawingScaleUnit = "mm" | "cm" | "m" | "in" | "ft";
 
@@ -72,6 +73,25 @@ export function formatDimFromPixels(
   const real = realLengthFromPixels(pixels, dpi, drawingScale);
   if (!real) return "";
   return `${roundReal(real.value)}${real.unit}`;
+}
+
+/**
+ * A length as it is written on a drawing: feet and inches to the nearest inch
+ * for an imperial scale (`3'0"`, `1'1"`, `8"`), the usual metric text otherwise.
+ * Empty when scale is not configured.
+ */
+export function formatLengthLabel(
+  pixels: number,
+  dpi: number | undefined,
+  drawingScale: DrawingScaleInput | undefined,
+): string {
+  const realUnitsPerPixel = getRealUnitsPerPixel(dpi, drawingScale);
+  if (realUnitsPerPixel === null || !drawingScale) return "";
+  if (drawingScale.unit !== "in" && drawingScale.unit !== "ft") {
+    return formatDimFromPixels(pixels, dpi, drawingScale);
+  }
+  const inchesPerUnit = drawingScale.unit === "ft" ? 12 : 1;
+  return formatFeetInches(pixels * realUnitsPerPixel * inchesPerUnit);
 }
 
 /** Real-world area from a pixel² value + drawing scale. Empty when scale is not configured. */

@@ -2,6 +2,26 @@
 
 All notable changes to `@astronautics44/neura-annotation-canvas`.
 
+## 2.8.0
+
+Live line lengths: while a line or polyline is drawn, each segment shows its
+real-world length. Behind `showLineLengths`; no type changed.
+
+### Added
+
+- **`showLineLengths`**, default `false`. With it on, and with `dpi` and
+  `drawingScale` set, the segment following the pointer is labelled with its
+  length as it grows, from `0"` on: `1'1"`, `3'0"`. A polyline's placed
+  segments keep their labels until it is finished. An imperial scale reads in
+  feet and inches to the nearest inch, a metric one as the size chip does; an
+  arc reads its curve length. Labels are screen-sized and take no clicks.
+
+### Unchanged
+
+- Finished marks draw exactly as before; the labels exist only while drawing.
+- Without `showLineLengths`, or without a scale, nothing is drawn and no
+  behaviour changes. The payload has nothing new in it.
+
 ## 2.7.2
 
 A resolved comment marker is no longer greyed out. No prop or type changed.
