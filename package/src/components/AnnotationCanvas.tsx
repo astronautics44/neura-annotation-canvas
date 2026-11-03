@@ -34,6 +34,7 @@ import { CommentMarkers } from "./CommentMarkers";
 import { CommentComposer } from "./CommentComposer";
 import { ScreenSpace } from "./ScreenSpace";
 import { AnnotationShape, type AnnotationHandlers, type ShapeOps } from "./AnnotationShape";
+import { LineLengthLabels } from "./LineLengthLabels";
 import { CursorReadout } from "./CursorReadout";
 import { createValueStore } from "./valueStore";
 import {
@@ -332,6 +333,16 @@ interface Props {
    */
   enableSnap?: boolean;
   /**
+   * While a line or polyline is being drawn, write each segment's real-world
+   * length along it, updating live as the pointer moves. Finished shapes show
+   * no lengths. Default false.
+   *
+   * Needs `dpi` and `drawingScale`; without them nothing is drawn. An imperial
+   * scale reads in feet and inches to the nearest inch (`3'0"`), a metric one
+   * as the chips do (`4.25m`).
+   */
+  showLineLengths?: boolean;
+  /**
    * What happens when the user deletes a vertex from a polygon that has only
    * three left — the point at which a polygon can no longer stay a polygon.
    * - "block"    — the deletion is refused, polygons always keep ≥3 vertices (default)
@@ -554,6 +565,7 @@ export function AnnotationCanvas({
   edgeSplitMode = "midpoint",
   enableCurves = false,
   enableSnap = false,
+  showLineLengths = false,
   polygonMinVertexAction = "block",
   dpi,
   drawingScale: drawingScaleProp,
@@ -2515,6 +2527,21 @@ export function AnnotationCanvas({
     return renderDrawPath([last, cur], [previewControl(draft, cur)], true);
   };
 
+  /** Live segment lengths for a path being drawn, the pointer's segment included. */
+  const renderDrawLengths = (draft: PathDraft, cur: [number, number]) => {
+    if (!showLineLengths || draft.pts.length === 0) return null;
+    return (
+      <LineLengthLabels
+        points={[...draft.pts, cur]}
+        curves={[...draft.curves, previewControl(draft, cur)]}
+        dpi={dpi}
+        drawingScale={drawingScale}
+        scale={scale}
+        theme={resolved}
+      />
+    );
+  };
+
   /** The middle point an arc will pass through, once it is placed. */
   const renderArcMid = (arc: { mid: [number, number] | null } | null) => arc?.mid ? (
     <ScreenSpace x={arc.mid[0]} y={arc.mid[1]} scale={scale} listening={false}>
@@ -2580,6 +2607,7 @@ export function AnnotationCanvas({
         <Group>
           {draw.pts.length > 1 && renderDrawPath(draw.pts, draw.curves, false)}
           {renderRubberBand(drawDraft(draw), draw.cur)}
+          {renderDrawLengths(drawDraft(draw), draw.cur)}
           {draw.pts.map(([x, y], i) => renderDrawVertex(x, y, i))}
           {renderArcMid(draw.arc)}
           {renderDrawHint(draw.cur, hint)}
@@ -2592,6 +2620,7 @@ export function AnnotationCanvas({
       return (
         <Group>
           {renderRubberBand(drawDraft(draw), draw.cur)}
+          {renderDrawLengths(drawDraft(draw), draw.cur)}
           {renderArcMid(draw.arc)}
           {hint && renderDrawHint(draw.cur, hint)}
         </Group>
