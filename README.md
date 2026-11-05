@@ -190,6 +190,7 @@ interface AnnotationCanvasProps {
   enableCurves?: boolean; // bend line / polyline segments by their middle handle; default: false
   enableSnap?: boolean; // snap placed points to line / polyline ends, F3 toggles; default: false
   showLineLengths?: boolean; // live real-world length on each segment while drawing a line / polyline; default: false
+  boldAnnotations?: boolean; // thicker, fully opaque strokes and stronger fills; default: false
 
   // Label chip visibility
   labelVisibility?: "always" | "hover" | "selected" | "hover+selected"; // default: "always"
@@ -1570,6 +1571,17 @@ following the pointer updates live as it grows, from the first move: `0"`, `8"`,
 
 The length comes from `dpi` and `drawingScale` (see [Drawing scale](#drawing-scale)).
 Without both, nothing is drawn. Without `showLineLengths` nothing changes.
+
+### Bold marks — `boldAnnotations`
+
+```tsx
+<AnnotationCanvas boldAnnotations ... />
+```
+
+Every mark is drawn with a thicker stroke (3px, 4px hovered), engine marks at
+full opacity, and area fills about twice as strong, so class colours stay easy
+to tell apart over a dense drawing. Selection, handles and dashes are
+unchanged. Without `boldAnnotations` nothing changes.
 
 ### Starting with every group collapsed — `annotationGroupsCollapsed`
 
