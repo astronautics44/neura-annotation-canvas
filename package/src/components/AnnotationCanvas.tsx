@@ -343,6 +343,11 @@ interface Props {
    */
   showLineLengths?: boolean;
   /**
+   * Draw every mark with thicker, fully opaque strokes and stronger fills so
+   * class colours read clearly over a busy drawing. Default false.
+   */
+  boldAnnotations?: boolean;
+  /**
    * What happens when the user deletes a vertex from a polygon that has only
    * three left — the point at which a polygon can no longer stay a polygon.
    * - "block"    — the deletion is refused, polygons always keep ≥3 vertices (default)
@@ -566,6 +571,7 @@ export function AnnotationCanvas({
   enableCurves = false,
   enableSnap = false,
   showLineLengths = false,
+  boldAnnotations = false,
   polygonMinVertexAction = "block",
   dpi,
   drawingScale: drawingScaleProp,
@@ -2453,6 +2459,7 @@ export function AnnotationCanvas({
         isHovered={hoveredId === ann.id}
         isOptional={enableOptional && ann.optional === true}
         curvesEnabled={enableCurves}
+        bold={boldAnnotations}
         showHandles={isSelected && selectedIds.length === 1}
         scale={scale}
         theme={resolved}

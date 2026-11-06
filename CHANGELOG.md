@@ -2,6 +2,22 @@
 
 All notable changes to `@astronautics44/neura-annotation-canvas`.
 
+## 2.8.1
+
+Bold marks, so class colours are easier to tell apart. Behind
+`boldAnnotations`; no type changed.
+
+### Added
+
+- **`boldAnnotations`**, default `false`. With it on, strokes are 3px (4px
+  hovered), engine marks draw at full opacity, and area fills are about twice
+  as strong.
+
+### Unchanged
+
+- Without `boldAnnotations` every mark draws exactly as before. Selection,
+  handles, dashes and the payload are unchanged.
+
 ## 2.8.0
 
 Live line lengths: while a line or polyline is drawn, each segment shows its

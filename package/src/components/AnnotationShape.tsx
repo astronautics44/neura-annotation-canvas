@@ -48,6 +48,12 @@ const ENGINE_STROKE_WIDTH = 1.5;
 const HUMAN_STROKE_WIDTH = 2;
 const OVERLAY_MIN_SCALE = 0.3;
 const FILL_ALPHA = { selected: 0.18, hovered: 0.15, engine: 0.08, human: 0.12 };
+/** `boldAnnotations`: thicker, fully opaque strokes and stronger fills. */
+const BOLD_ENGINE_OPACITY = 1.0;
+const BOLD_HOVER_STROKE_WIDTH = 4;
+const BOLD_ENGINE_STROKE_WIDTH = 3;
+const BOLD_HUMAN_STROKE_WIDTH = 3;
+const BOLD_FILL_ALPHA = { selected: 0.32, hovered: 0.28, engine: 0.22, human: 0.24 };
 /**
  * An optional mark's stroke, dash then gap, in screen pixels. Konva applies a
  * dash after resetting the transform for a stroke that does not scale, so this
@@ -110,6 +116,11 @@ interface AnnotationShapeProps {
    * it on draws, measures and edits exactly what it did before.
    */
   curvesEnabled: boolean;
+  /**
+   * Thicker strokes and stronger fills. The canvas passes true only when
+   * `boldAnnotations` is on, so other consumers draw exactly what they did.
+   */
+  bold: boolean;
   /** Resize and vertex handles show only when this is the one selected shape. */
   showHandles: boolean;
   /** The stage scale React last rendered with. */
@@ -136,6 +147,7 @@ function AnnotationShapeImpl({
   isHovered,
   isOptional,
   curvesEnabled,
+  bold,
   showHandles,
   scale,
   theme,
@@ -151,18 +163,23 @@ function AnnotationShapeImpl({
   ops,
 }: AnnotationShapeProps) {
   const isEngine = ann.source === "engine";
-  const baseStrokeWidth = isEngine ? ENGINE_STROKE_WIDTH : HUMAN_STROKE_WIDTH;
+  const baseStrokeWidth = bold
+    ? (isEngine ? BOLD_ENGINE_STROKE_WIDTH : BOLD_HUMAN_STROKE_WIDTH)
+    : (isEngine ? ENGINE_STROKE_WIDTH : HUMAN_STROKE_WIDTH);
   // Selection is signalled by the accent glow (selectionGlow) + fill, not by a
   // thicker stroke — keep the stroke at its base/hover width.
-  const strokeWidth = isHovered ? HOVER_STROKE_WIDTH : baseStrokeWidth;
-  const opacity = isEngine ? ENGINE_OPACITY : 1.0;
+  const strokeWidth = isHovered
+    ? (bold ? BOLD_HOVER_STROKE_WIDTH : HOVER_STROKE_WIDTH)
+    : baseStrokeWidth;
+  const opacity = isEngine ? (bold ? BOLD_ENGINE_OPACITY : ENGINE_OPACITY) : 1.0;
   const shapeMeta = ann.meta as ShapeMeta | undefined;
   const isHollowFill = shapeMeta?.hollow === true;
+  const fills = bold ? BOLD_FILL_ALPHA : FILL_ALPHA;
   const fillAlpha = isHollowFill ? 0
-    : isSelected ? FILL_ALPHA.selected
-      : isHovered ? FILL_ALPHA.hovered
-        : isEngine ? FILL_ALPHA.engine
-          : FILL_ALPHA.human;
+    : isSelected ? fills.selected
+      : isHovered ? fills.hovered
+        : isEngine ? fills.engine
+          : fills.human;
   const rings = getAnnotationRings(ann);
   const curves = curvesEnabled ? curvesOf(ann) : undefined;
   /** The mark as this canvas draws it: without bends it does not show. */
